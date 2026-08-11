@@ -1,0 +1,27 @@
+name: Keep Шільпо awake
+
+# Render's free plan suspends a service after ~15 minutes without traffic, and
+# a suspended service stops long-polling Telegram — the bot goes silent. This
+# ping keeps it warm and doubles as an uptime check.
+#
+# ⚠️ Replace the URL below with your own Render address after the first deploy.
+
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-render-awake
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Wake and verify the bot
+        run: curl --fail --silent --show-error --retry 2 --retry-delay 10 --max-time 90 https://shilpo.onrender.com/health

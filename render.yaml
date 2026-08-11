@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: shilpo
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci --prefix bot && npm ci --prefix webapp && npm run build --prefix webapp && npm run build --prefix bot
+    startCommand: npm run start --prefix bot
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # Set these in the Render dashboard — never commit them.
+      - key: BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false

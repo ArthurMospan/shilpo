@@ -1,0 +1,13 @@
+{
+  "name": "shilpo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Шільпо — Telegram assistant that turns a shopping list photo into a ready Silpo cart",
+  "scripts": {
+    "install:all": "npm ci --prefix bot && npm ci --prefix webapp",
+    "build": "npm run build --prefix webapp && npm run build --prefix bot",
+    "dev": "npm run dev --prefix bot",
+    "start": "npm run start --prefix bot",
+    "test": "npm test --prefix bot"
+  }
+}
