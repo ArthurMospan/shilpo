@@ -11,6 +11,7 @@
     "test": "npm test --prefix bot",
     "webhook:set": "node scripts/set-webhook.mjs",
     "webhook:info": "node scripts/set-webhook.mjs --info",
-    "webhook:delete": "node scripts/set-webhook.mjs --delete"
+    "webhook:delete": "node scripts/set-webhook.mjs --delete",
+    "bot:setup": "node scripts/setup-bot.mjs"
   }
 }
