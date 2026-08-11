@@ -1,9 +1,12 @@
-// Temporary diagnostic: a function with a plain filename and no imports.
-// If /api/ping answers JSON while /api/health does not, the catch-all route is
-// the problem rather than the api/ directory being ignored altogether.
+// Temporary diagnostic: reports exactly what a rewritten request looks like by
+// the time it reaches a function, so the real entry point can reconstruct the
+// original path instead of guessing at Vercel's substitution syntax.
 import type { IncomingMessage, ServerResponse } from 'http';
 
-export default function handler(_req: IncomingMessage, res: ServerResponse) {
+export default function handler(req: IncomingMessage, res: ServerResponse) {
+    const interesting = Object.fromEntries(
+        Object.entries(req.headers).filter(([key]) => key.startsWith('x-vercel') || key.startsWith('x-forwarded'))
+    );
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ ping: 'ok', at: new Date().toISOString() }));
+    res.end(JSON.stringify({ url: req.url, method: req.method, headers: interesting }, null, 2));
 }
