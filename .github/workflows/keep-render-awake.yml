@@ -4,7 +4,7 @@ name: Keep Шільпо awake
 # a suspended service stops long-polling Telegram — the bot goes silent. This
 # ping keeps it warm and doubles as an uptime check.
 #
-# ⚠️ Replace the URL below with your own Render address after the first deploy.
+# The URL below must match the deployed Render service.
 
 on:
   schedule:
@@ -24,4 +24,4 @@ jobs:
     timeout-minutes: 3
     steps:
       - name: Wake and verify the bot
-        run: curl --fail --silent --show-error --retry 2 --retry-delay 10 --max-time 90 https://shilpo.onrender.com/health
+        run: curl --fail --silent --show-error --retry 2 --retry-delay 10 --max-time 90 https://shilpo-5hya.onrender.com/health

@@ -28,7 +28,15 @@ export function createServer(bot: Telegraf) {
     app.use(express.json({ limit: '1mb' }));
 
     app.get('/health', (_req, res) => {
-        res.json({ status: 'ok', checkedAt: new Date().toISOString() });
+        // webappUrl is echoed because a mismatch between it and the real
+        // public address silently breaks both the Mini App button and the
+        // OAuth redirect — and that is invisible from the logs.
+        res.json({
+            status: 'ok',
+            checkedAt: new Date().toISOString(),
+            webappUrl: (process.env.WEBAPP_URL || '').trim().replace(/\/+$/, ''),
+            database: process.env.TURSO_DATABASE_URL ? 'turso' : 'local-sqlite',
+        });
     });
 
     // ── OAuth 2.1 PKCE ──────────────────────────────────────────────

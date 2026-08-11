@@ -4,7 +4,11 @@ services:
     runtime: node
     plan: free
     region: frankfurt
-    buildCommand: npm ci --prefix bot && npm ci --prefix webapp && npm run build --prefix webapp && npm run build --prefix bot
+    # NODE_ENV=production below also applies during the build, and npm skips
+    # devDependencies in that mode — which would leave TypeScript and Vite
+    # missing. --include=dev keeps the build toolchain available while the
+    # runtime still starts in production mode.
+    buildCommand: npm ci --include=dev --prefix bot && npm ci --include=dev --prefix webapp && npm run build --prefix webapp && npm run build --prefix bot
     startCommand: npm run start --prefix bot
     healthCheckPath: /health
     envVars:
