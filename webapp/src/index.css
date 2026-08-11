@@ -173,6 +173,18 @@ a { color: inherit; }
   margin-top: 9px; padding: 8px; border: 0; border-radius: 11px;
   color: #8a5a2e; background: #fdf3ea; font-size: 11px; font-weight: 750;
 }
+.more-button.wide { margin: 4px 0 2px; padding: 13px; font-size: 12px; }
+
+/* ── Shelf sorting ──────────────────────────────────────── */
+.sort-row { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.sort-chip {
+  padding: 7px 11px; border: 1px solid #e6e6e1; border-radius: 999px;
+  color: #6f6f68; background: #fff; font-size: 11px; font-weight: 700;
+  transition: background .14s ease, color .14s ease, border-color .14s ease;
+}
+.sort-chip.active { border-color: transparent; color: #fff; background: var(--orange-dark); }
+.sort-chip:disabled { opacity: .55; }
+.sort-total { margin-left: auto; color: #a3a39b; font-size: 11px; font-weight: 700; }
 
 .item-missing {
   display: flex; align-items: center; gap: 8px; margin-top: 10px;
@@ -301,7 +313,8 @@ a { color: inherit; }
 .search-result-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
 .search-result-copy strong { display: -webkit-box; overflow: hidden; font-size: 12px; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .search-result-copy span { color: #8d8d85; font-size: 10px; }
-.search-result-copy b { font-size: 13px; }
+.search-result-copy b { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
+.search-result-copy b del { color: #a5a59d; font-size: 10px; font-weight: 600; }
 
 /* ── Store picker ───────────────────────────────────────── */
 .store-scroll { display: flex; flex: 1; flex-direction: column; gap: 16px; overflow-y: auto; overscroll-behavior: contain; }

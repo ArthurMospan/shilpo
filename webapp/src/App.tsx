@@ -6,7 +6,7 @@ import {
 import * as api from './api';
 import { closeApp, haptic, initTelegram, openExternal } from './telegram';
 import type {
-    HomeResponse, ListItem, ListResponse, ProductCandidate,
+    HomeResponse, ListItem, ListResponse, ProductCandidate, ShelfSort,
     StoreInfo, StoreMismatch, StoreOption, StoreOptions,
 } from './types';
 
@@ -72,7 +72,14 @@ export default function App() {
             ? api.loadList(listId).then(response => { if (!cancelled) applyList(response); })
             : api.loadHome().then(response => { if (!cancelled) setHome(response); });
         load.catch((error: unknown) => {
-            if (!cancelled) setLoadError(loadErrorKind(error));
+            if (cancelled) return;
+            // A finished list opened from an old message is not an error worth a
+            // dead end — show the guest where they are instead.
+            if (listId && error instanceof api.ApiError && error.status === 404) {
+                setListId('');
+                return;
+            }
+            setLoadError(loadErrorKind(error));
         });
         return () => { cancelled = true; };
     }, [applyList, listId]);
@@ -315,7 +322,7 @@ export default function App() {
             )}
 
             {alternativesFor && (
-                <AlternativesSheet
+                <ShelfSheet
                     listId={listId}
                     item={alternativesFor}
                     onClose={() => setAlternativesFor(null)}
@@ -493,7 +500,7 @@ function ItemCard({ item, onSelect, onQuantity, onToggleDropped, onOpenAlternati
                     </div>
 
                     <button className="more-button" onClick={onOpenAlternatives}>
-                        <Layers size={14} /> Шукати серед усіх товарів
+                        <Layers size={14} /> Усі варіанти{item.total > item.candidates.length ? ` · ${item.total}` : ''}
                     </button>
                 </>
             )}
@@ -754,32 +761,73 @@ function StoreGroup({ title, stores, isCurrent, onPick, empty }: {
     );
 }
 
-function AlternativesSheet({ listId, item, onClose, onPicked }: {
+const PAGE_SIZE = 30;
+
+const SORT_LABELS: { key: ShelfSort; label: string }[] = [
+    { key: 'best', label: 'Найдоречніші' },
+    { key: 'cheap', label: 'Найдешевші' },
+    { key: 'promo', label: 'За акцією' },
+];
+
+/**
+ * The whole shelf for one line. The strip above is a shortlist; this is
+ * everything the store has, ordered as asked and paged rather than truncated.
+ */
+function ShelfSheet({ listId, item, onClose, onPicked }: {
     listId: string;
     item: UiItem;
     onClose(): void;
     onPicked(candidates: ProductCandidate[], product: ProductCandidate): void;
 }) {
     const [query, setQuery] = useState(item.label);
-    const [results, setResults] = useState<ProductCandidate[]>(item.candidates);
-    const [searching, setSearching] = useState(false);
+    const [sort, setSort] = useState<ShelfSort>('best');
+    const [results, setResults] = useState<ProductCandidate[]>([]);
+    const [total, setTotal] = useState(item.total);
+    const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState('');
+    // Bumped to re-run the query: a new sort or a new search term both mean
+    // "start the list again", and paging must not mix two orderings.
+    const [run, setRun] = useState(0);
+    const term = useRef(item.label);
 
-    const runSearch = useCallback(async () => {
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        setError('');
+        api.loadShelf(listId, item.itemId, term.current, { sort, offset: 0, limit: PAGE_SIZE })
+            .then((page) => {
+                if (cancelled) return;
+                setResults(page.candidates);
+                setTotal(page.total);
+                if (!page.total) setError('Нічого не знайшлося. Спробуй інші слова.');
+            })
+            .catch(() => { if (!cancelled) setError('Пошук не вдався. Спробуй ще раз.'); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    }, [item.itemId, listId, run, sort]);
+
+    const loadMore = useCallback(async () => {
+        setLoadingMore(true);
+        try {
+            const page = await api.loadShelf(listId, item.itemId, term.current, {
+                sort, offset: results.length, limit: PAGE_SIZE,
+            });
+            setResults(current => [...current, ...page.candidates]);
+            setTotal(page.total);
+        } catch {
+            setError('Не вдалося завантажити ще.');
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [item.itemId, listId, results.length, sort]);
+
+    const research = useCallback(() => {
         const trimmed = query.trim();
         if (trimmed.length < 2) return;
-        setSearching(true);
-        setError('');
-        try {
-            const response = await api.searchAlternatives(listId, item.itemId, trimmed);
-            setResults(response.candidates);
-            if (!response.candidates.length) setError('Нічого не знайшлося. Спробуй інші слова.');
-        } catch {
-            setError('Пошук не вдався. Спробуй ще раз.');
-        } finally {
-            setSearching(false);
-        }
-    }, [item.itemId, listId, query]);
+        term.current = trimmed;
+        setRun(value => value + 1);
+    }, [query]);
 
     return (
         <Sheet title="Усі варіанти" onClose={onClose}>
@@ -788,15 +836,29 @@ function AlternativesSheet({ listId, item, onClose, onPicked }: {
                 <input
                     value={query}
                     onChange={event => setQuery(event.target.value)}
-                    onKeyDown={event => { if (event.key === 'Enter') void runSearch(); }}
+                    onKeyDown={event => { if (event.key === 'Enter') research(); }}
                     placeholder="Що шукаємо?"
                     autoComplete="off"
                 />
-                <button className="item-remove" onClick={() => void runSearch()} disabled={searching} aria-label="Шукати">
-                    {searching
+                <button className="item-remove" onClick={research} disabled={loading} aria-label="Шукати">
+                    {loading
                         ? <span className="spinner" style={{ width: 15, height: 15, borderWidth: 2 }} />
                         : <ArrowRight size={15} />}
                 </button>
+            </div>
+
+            <div className="sort-row">
+                {SORT_LABELS.map(option => (
+                    <button
+                        key={option.key}
+                        className={`sort-chip${sort === option.key ? ' active' : ''}`}
+                        onClick={() => setSort(option.key)}
+                        disabled={loading}
+                    >
+                        {option.label}
+                    </button>
+                ))}
+                {total > 0 && <span className="sort-total">{total}</span>}
             </div>
 
             {error && <p className="sheet-error">{error}</p>}
@@ -809,12 +871,27 @@ function AlternativesSheet({ listId, item, onClose, onPicked }: {
                         </span>
                         <span className="search-result-copy">
                             <strong>{candidate.title}</strong>
-                            {candidate.packaging && <span>{candidate.packaging}</span>}
-                            <b>{money(candidate.price)}</b>
+                            <span>
+                                {candidate.packaging}
+                                {candidate.packaging && !candidate.inStock ? ' · ' : ''}
+                                {!candidate.inStock && 'немає в наявності'}
+                            </span>
+                            <b>
+                                {money(candidate.price)}
+                                {candidate.oldPrice > candidate.price && <del>{money(candidate.oldPrice)}</del>}
+                            </b>
                         </span>
                         {candidate.productId === item.selectedProductId && <Check size={17} color="#16845b" />}
                     </button>
                 ))}
+
+                {results.length < total && (
+                    <button className="more-button wide" onClick={() => void loadMore()} disabled={loadingMore}>
+                        {loadingMore
+                            ? <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Завантажую…</>
+                            : <>Показати ще · лишилось {total - results.length}</>}
+                    </button>
+                )}
             </div>
         </Sheet>
     );

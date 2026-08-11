@@ -30,23 +30,23 @@ export function connectKeyboard(tgId: number) {
 
 export const NEW_LIST_BUTTON = '📝 Новий список';
 export const CART_BUTTON = '🛒 Мій кошик';
-export const APP_BUTTON = '🍊 Мій список';
 
 /**
  * The buttons that live by the input field.
  *
- * A single Mini App button there was the wrong thing: it opened an app to say
- * "you have no list", while the two actions a guest actually wants between
- * lists — start over, look in the cart — had no button at all. Starting a new
- * list has always been possible by simply sending a photo, but nothing said so.
+ * Deliberately no Mini App button among them. Telegram gives a Web App opened
+ * from a *keyboard* button no initData at all — the launch is unsigned, so the
+ * server cannot tell who is calling and answers 401 every time. Keyboard
+ * buttons are for chat actions; the Mini App is opened from the inline button
+ * under the list, where Telegram does sign the launch.
  *
  * Telegram allows one reply markup per message, so this can only ride on
  * messages that carry no inline buttons of their own.
  */
 export function mainKeyboard() {
-    const rows = [[Markup.button.text(NEW_LIST_BUTTON), Markup.button.text(CART_BUTTON)]];
-    if (webappUrl()) rows.push([Markup.button.webApp(APP_BUTTON, webappUrl())]);
-    return Markup.keyboard(rows).resize().persistent();
+    return Markup.keyboard([[Markup.button.text(NEW_LIST_BUTTON), Markup.button.text(CART_BUTTON)]])
+        .resize()
+        .persistent();
 }
 
 export async function askToConnect(ctx: Context, tgId: number, reason: string): Promise<void> {
@@ -189,16 +189,22 @@ export async function searchAndInvite(
             return;
         }
 
-        const estimate = found.reduce((sum, item) => {
-            const product = item.candidates[0];
-            return sum + (product ? product.price * (Number(item.quantity) || 1) : 0);
+        // "Приблизно" was a guess dressed up as a number — it added up whichever
+        // product happened to rank first. The cheapest option per line is a
+        // floor the total genuinely cannot go under, so "від" is the truth.
+        const floor = found.reduce((sum, item) => {
+            const cheapest = item.candidates.reduce(
+                (best, candidate) => (best === null || candidate.price < best ? candidate.price : best),
+                null as number | null
+            );
+            return sum + (cheapest ?? 0) * (Number(item.quantity) || 1);
         }, 0);
 
         const lines = [
             `✅ <b>Знайшла ${found.length} ${pluralizeItems(found.length)}</b>`,
             `📍 ${escapeHtml(context.storeLabel)}`,
             '',
-            `💰 Орієнтовно: <b>${formatPrice(estimate)}</b> — кількість підкрутиш у застосунку`,
+            `💰 Ціна від <b>${formatPrice(floor)}</b> — залежно від того, що обереш`,
         ];
         if (context.deliveryPrice !== null) {
             const free = context.freeDeliveryFrom

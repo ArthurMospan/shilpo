@@ -3,8 +3,9 @@ import type {
     CheckoutResponse,
     HomeResponse,
     ListResponse,
-    ProductCandidate,
     SelectStoreResponse,
+    ShelfPage,
+    ShelfSort,
     StoreOption,
     StoreOptions,
 } from './types';
@@ -80,14 +81,16 @@ export function setDropped(listId: string, itemId: string, dropped: boolean): Pr
     });
 }
 
-export function searchAlternatives(
+/** One page of the whole shelf for a line — `total` is what the store really has. */
+export function loadShelf(
     listId: string,
     itemId: string,
-    query: string
-): Promise<{ candidates: ProductCandidate[] }> {
-    return request<{ candidates: ProductCandidate[] }>(`/api/list/${encodeURIComponent(listId)}/search`, {
+    query: string,
+    options: { sort: ShelfSort; offset: number; limit?: number }
+): Promise<ShelfPage> {
+    return request<ShelfPage>(`/api/list/${encodeURIComponent(listId)}/search`, {
         method: 'POST',
-        body: JSON.stringify({ itemId, query }),
+        body: JSON.stringify({ itemId, query, ...options }),
     });
 }
 

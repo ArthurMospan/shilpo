@@ -76,14 +76,14 @@ export async function runSearch(
 
         const items = await getActiveItems(listId);
         const queries = items.map(item => [item.query, item.note].filter(Boolean).join(' ').trim());
-        const familiarity = await loadFamiliaritySafely(tgId, token);
+        const familiarity = await loadFamiliaritySafely(tgId, context, token);
         const results = await findProductsForQueries(token, context, queries, { preference, familiarity });
 
         const found: ListItemRecord[] = [];
         const missing: ListItemRecord[] = [];
         for (const [index, item] of items.entries()) {
             const candidates = results[index]?.candidates ?? [];
-            await setCandidates(item.itemId, candidates);
+            await setCandidates(item.itemId, candidates, results[index]?.total ?? candidates.length);
             if (candidates.length) {
                 await selectProduct(item.itemId, candidates[0].productId);
                 found.push({ ...item, candidates, selectedProductId: candidates[0].productId });

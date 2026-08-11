@@ -1,6 +1,10 @@
 import { callMCPTool, parseMcpContent } from './mcp';
+import { mapWithConcurrency, searchCatalogAll } from './catalog';
 import type { StoreContext } from './store';
 import { dropIrrelevant, rankCandidates, type RankingContext } from './ranking';
+
+/** Silpo is someone else's server; a shopping list is no reason to flood it. */
+const CATALOG_CONCURRENCY = 6;
 
 export interface ProductCandidate {
     productId: string;
@@ -268,12 +272,91 @@ function dedupe(products: ProductCandidate[]): ProductCandidate[] {
 export interface QueryResult {
     query: string;
     candidates: ProductCandidate[];
+    /** How many products the store has for this query — the strip shows a slice. */
+    total: number;
 }
 
 /**
- * Looks up every line of the guest's list in one MCP round trip per batch of
- * 30. Availability and price are resolved for the cart's own branch and
- * delivery type, which is what the guest will actually be charged.
+ * How wide a net to cast before ranking. Ranking cannot pick the cheapest
+ * product on a shelf it never saw, and most queries return fewer than this
+ * anyway, so in practice the whole shelf gets considered.
+ */
+const RANKING_POOL = 200;
+
+/** Runs one line against the full store catalogue and keeps the best of it. */
+async function resolveFromCatalog(
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    query: string,
+    ranking: RankingContext,
+    limitPerQuery: number
+): Promise<QueryResult> {
+    const page = await searchCatalogAll(context, query, RANKING_POOL);
+    const normalized = dedupe(page.items);
+    const relevant = dropIrrelevant(normalized, query);
+    const ranked = rankCandidates(relevant, query, ranking).slice(0, limitPerQuery);
+    console.log(
+        `[Search] "${query}" store=${page.total} fetched=${normalized.length} `
+        + `relevant=${relevant.length} shown=${ranked.length}`
+        + (ranked.length ? ` cheapest=${formatPrice(Math.min(...ranked.map(item => item.price)))}` : '')
+    );
+    return { query, candidates: ranked, total: relevant.length };
+}
+
+export const SHELF_SORTS = ['best', 'cheap', 'promo'] as const;
+export type ShelfSort = (typeof SHELF_SORTS)[number];
+
+const SHELF_TTL_MS = 2 * 60 * 1000;
+const shelfCache = new Map<string, { expiresAt: number; items: ProductCandidate[] }>();
+
+function discountOf(product: ProductCandidate): number {
+    return product.oldPrice > product.price ? 1 - product.price / product.oldPrice : 0;
+}
+
+/**
+ * Every product the store has for one line, ordered as the guest asked.
+ *
+ * Cached for a couple of minutes because paging through it must not re-fetch
+ * three pages from Silpo per tap — and because the answer to "показати ще" has
+ * to be the continuation of the same list, not a fresh roll of the dice.
+ */
+export async function loadShelf(
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    query: string,
+    ranking: RankingContext,
+    sort: ShelfSort
+): Promise<ProductCandidate[]> {
+    const key = `${context.branchId}|${context.deliveryType}|${query.toLocaleLowerCase('uk-UA')}`;
+    const cached = shelfCache.get(key);
+    let items = cached && cached.expiresAt > Date.now() ? cached.items : null;
+
+    if (!items) {
+        const page = await searchCatalogAll(context, query);
+        items = dropIrrelevant(dedupe(page.items), query);
+        shelfCache.set(key, { expiresAt: Date.now() + SHELF_TTL_MS, items });
+        console.log(`[Shelf] "${query}" store=${page.total} relevant=${items.length}`);
+    }
+
+    // Out of stock always sinks, whatever the ordering: it is not an offer.
+    const inStockFirst = (left: ProductCandidate, right: ProductCandidate): number =>
+        Number(right.inStock) - Number(left.inStock);
+
+    if (sort === 'cheap') {
+        return [...items].sort((left, right) => inStockFirst(left, right) || left.price - right.price);
+    }
+    if (sort === 'promo') {
+        return [...items].sort((left, right) =>
+            inStockFirst(left, right) || discountOf(right) - discountOf(left) || left.price - right.price);
+    }
+    return rankCandidates(items, query, ranking);
+}
+
+/**
+ * Looks up every line of the guest's list against the store they shop in.
+ *
+ * The storefront catalogue is the source, because it is the same one the guest
+ * is looking at when they tell us we missed the cheap beer. MCP's batch search
+ * stays as a fallback for the day the storefront is unreachable — it still
+ * finds products, just not all of them.
  */
 export async function findProductsForQueries(
     token: string,
@@ -286,9 +369,39 @@ export async function findProductsForQueries(
     const unique = [...new Set(queries.map(query => query.trim()).filter(Boolean))];
     if (!unique.length) return [];
 
+    const resolved = await mapWithConcurrency(unique, CATALOG_CONCURRENCY, async (query) => {
+        try {
+            return await resolveFromCatalog(context, query, ranking, limitPerQuery);
+        } catch (error) {
+            console.warn(`[Search] Catalogue failed for "${query}":`, error);
+            return null;
+        }
+    });
+
+    if (resolved.some(Boolean)) {
+        const byQuery = new Map(resolved.filter(Boolean).map(result => [result!.query, result!]));
+        return queries.map(query => byQuery.get(query.trim())
+            ?? { query, candidates: [], total: 0 });
+    }
+
+    // Every line failed, so this is the catalogue being down rather than an odd
+    // query. Fall back to the official search instead of an empty list.
+    console.warn('[Search] Storefront catalogue unavailable — falling back to MCP');
+    return findViaMcp(token, context, unique, queries, ranking, limitPerQuery, now);
+}
+
+async function findViaMcp(
+    token: string,
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    unique: string[],
+    queries: string[],
+    ranking: RankingContext,
+    limitPerQuery: number,
+    now: Date
+): Promise<QueryResult[]> {
     const timeslotStart = now.toISOString();
     const timeslotEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
-    const results = new Map<string, ProductCandidate[]>();
+    const results = new Map<string, { candidates: ProductCandidate[]; total: number }>();
 
     for (let index = 0; index < unique.length; index += MAX_BATCH_QUERIES) {
         const batch = unique.slice(index, index + MAX_BATCH_QUERIES);
@@ -308,21 +421,16 @@ export async function findProductsForQueries(
             // product that is not what the guest asked for.
             const relevant = dropIrrelevant(normalized, query);
             const ranked = rankCandidates(relevant, query, ranking).slice(0, limitPerQuery);
-            results.set(query, ranked);
-            // How wide the choice really is, per line. `raw` against the limit
-            // we asked for is the one number that says whether Silpo honours
-            // `limit` per query or spreads it across the whole batch — which
-            // decides whether a bigger ask would buy the guest anything.
+            results.set(query, { candidates: ranked, total: relevant.length });
             console.log(
-                `[Search] "${query}" asked=${limitPerQuery} raw=${raw.length} priced=${normalized.length} `
+                `[Search:mcp] "${query}" asked=${limitPerQuery} raw=${raw.length} `
                 + `relevant=${relevant.length} shown=${ranked.length}`
-                + (ranked.length ? ` cheapest=${formatPrice(Math.min(...ranked.map(p => p.price)))}` : '')
             );
         }
     }
 
     return queries.map(query => ({
         query,
-        candidates: results.get(query.trim()) || [],
+        ...(results.get(query.trim()) ?? { candidates: [], total: 0 }),
     }));
 }

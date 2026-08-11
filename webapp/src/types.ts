@@ -24,6 +24,18 @@ export interface ListItem {
     unit: string;
     selectedProductId: string;
     candidates: ProductCandidate[];
+    /** How many products the store has for this line; the strip shows a slice. */
+    total: number;
+}
+
+/** How the full shelf for one line is ordered. */
+export type ShelfSort = 'best' | 'cheap' | 'promo';
+
+export interface ShelfPage {
+    candidates: ProductCandidate[];
+    total: number;
+    offset: number;
+    sort: ShelfSort;
 }
 
 export type StoreKind = 'delivery' | 'pickup';

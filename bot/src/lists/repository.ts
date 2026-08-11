@@ -23,6 +23,8 @@ export interface ListItemRecord {
     needsQuantity: boolean;
     clarification: Clarification | null;
     candidates: ProductCandidate[];
+    /** How many products the store has for this line — the strip shows a slice. */
+    candidatesTotal: number;
     selectedProductId: string;
     dropped: boolean;
 }
@@ -84,6 +86,7 @@ function toItemRecord(row: any): ListItemRecord {
         needsQuantity: Number(row.needs_quantity) === 1,
         clarification: parseJson<Clarification | null>(row.clarification, null),
         candidates: parseJson<ProductCandidate[]>(row.candidates, []),
+        candidatesTotal: Number(row.candidates_total) || 0,
         selectedProductId: String(row.selected_product_id || ''),
         dropped: Number(row.dropped) === 1,
     };
@@ -229,9 +232,13 @@ export async function clearClarification(itemId: string): Promise<void> {
     await db.prepare('UPDATE list_items SET clarification = NULL WHERE item_id = ?').run(itemId);
 }
 
-export async function setCandidates(itemId: string, candidates: ProductCandidate[]): Promise<void> {
-    await db.prepare('UPDATE list_items SET candidates = ? WHERE item_id = ?')
-        .run(JSON.stringify(candidates), itemId);
+export async function setCandidates(
+    itemId: string,
+    candidates: ProductCandidate[],
+    total = candidates.length
+): Promise<void> {
+    await db.prepare('UPDATE list_items SET candidates = ?, candidates_total = ? WHERE item_id = ?')
+        .run(JSON.stringify(candidates), total, itemId);
 }
 
 export async function selectProduct(itemId: string, productId: string): Promise<void> {

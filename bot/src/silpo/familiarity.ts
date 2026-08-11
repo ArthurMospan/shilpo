@@ -1,5 +1,6 @@
 import { callMCPTool, parseMcpContent } from './mcp';
 import { normalizeText, type Familiarity, NO_FAMILIARITY } from './ranking';
+import type { StoreContext } from './store';
 
 // What the guest already buys is the strongest signal we have for "the right
 // one of these fifteen". Silpo exposes it through favorites and order history,
@@ -37,14 +38,22 @@ function harvest(response: any, familiarity: Familiarity): void {
  * a guest with no history simply gets an empty set, and a failing call must
  * never block the search.
  */
-export async function loadFamiliarity(tgId: number, token: string): Promise<Familiarity> {
+export async function loadFamiliarity(
+    tgId: number,
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    token: string
+): Promise<Familiarity> {
     const cached = cache.get(tgId);
     if (cached && cached.expiresAt > Date.now()) return cached.familiarity;
 
+    // These three tools require the store context. Calling them without it
+    // failed every single time — silently, because a missing history is not an
+    // error — so "⭐ те, що я вже брав" had no history to rank by at all.
+    const store = { branchId: context.branchId, deliveryType: context.deliveryType };
     const results = await Promise.allSettled([
-        callMCPTool(token, 'silpo_get_my_favorites', {}),
-        callMCPTool(token, 'silpo_get_my_online_orders', { limit: 10, offset: 0 }),
-        callMCPTool(token, 'silpo_get_my_offline_orders', { limit: 10, offset: 0 }),
+        callMCPTool(token, 'silpo_get_my_favorites', store),
+        callMCPTool(token, 'silpo_get_my_online_orders', { ...store, limit: 10, offset: 0 }),
+        callMCPTool(token, 'silpo_get_my_offline_orders', { ...store, limit: 10, offset: 0 }),
     ]);
 
     const familiarity: Familiarity = { productIds: new Set(), titles: new Set() };
@@ -57,9 +66,13 @@ export async function loadFamiliarity(tgId: number, token: string): Promise<Fami
     return familiarity;
 }
 
-export async function loadFamiliaritySafely(tgId: number, token: string): Promise<Familiarity> {
+export async function loadFamiliaritySafely(
+    tgId: number,
+    context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
+    token: string
+): Promise<Familiarity> {
     try {
-        return await loadFamiliarity(tgId, token);
+        return await loadFamiliarity(tgId, context, token);
     } catch (error) {
         console.warn('[Familiarity] Falling back to no history:', error);
         return NO_FAMILIARITY;

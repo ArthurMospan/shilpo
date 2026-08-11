@@ -72,6 +72,7 @@ const schemaStatements = [
         needs_quantity INTEGER DEFAULT 0,
         clarification TEXT,
         candidates TEXT,
+        candidates_total INTEGER DEFAULT 0,
         selected_product_id TEXT,
         dropped INTEGER DEFAULT 0,
         FOREIGN KEY(list_id) REFERENCES lists(list_id) ON DELETE CASCADE
@@ -117,6 +118,7 @@ async function bootstrap(): Promise<void> {
         ['users', 'store_branch_id', 'TEXT'],
         ['users', 'store_delivery_type', 'TEXT'],
         ['users', 'store_label', 'TEXT'],
+        ['list_items', 'candidates_total', 'INTEGER'],
     ] as const) {
         try {
             await runSchemaStatement(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);

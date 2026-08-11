@@ -11,7 +11,12 @@ import {
 } from '../silpo/store';
 import { getStorePreference, setStorePreference } from '../silpo/store-preference';
 import { addProductsToCart, clearCart, getCartSummary, SILPO_BASKET_URL, type CartSummary } from '../silpo/cart';
-import { CANDIDATES_PER_SEARCH, findProductsForQueries } from '../silpo/products';
+import {
+    CANDIDATES_PER_SEARCH,
+    loadShelf,
+    SHELF_SORTS,
+    type ShelfSort,
+} from '../silpo/products';
 import { loadFamiliaritySafely } from '../silpo/familiarity';
 import {
     abandonActiveLists,
@@ -186,6 +191,8 @@ export function createApp(bot: Telegraf) {
                 unit: line.item.unit,
                 selectedProductId: line.item.selectedProductId,
                 candidates: line.item.candidates,
+                // What the strip is a slice of, so it can say so.
+                total: Math.max(line.item.candidatesTotal, line.item.candidates.length),
             })),
             totals: { total: selection.total, productCount: selection.productCount },
             basketUrl: SILPO_BASKET_URL,
@@ -363,7 +370,13 @@ export function createApp(bot: Telegraf) {
         res.json({ ok: true, ...(await totalsFor(target.listId)) });
     });
 
-    /** Widens the choice for one line when none of the first candidates fit. */
+    /**
+     * The whole shelf for one line, a page at a time.
+     *
+     * Twenty cards is a shortlist, not a catalogue, and a guest who can see
+     * cheaper beer on silpo.ua is right to be annoyed at it. This serves the
+     * complete result set the store has, ordered the way they ask.
+     */
     app.post('/api/list/:listId/search', async (req, res) => {
         const tgId = req.tgId!;
         const target = await itemForRequest(req);
@@ -376,20 +389,28 @@ export function createApp(bot: Telegraf) {
             res.status(400).json({ error: 'Query is too short' });
             return;
         }
+        const sort = SHELF_SORTS.includes(req.body?.sort) ? req.body.sort as ShelfSort : 'best';
+        const offset = Math.max(0, Math.min(1000, Math.round(Number(req.body?.offset) || 0)));
+        const pageSize = Math.max(1, Math.min(60, Math.round(Number(req.body?.limit) || 30)));
+
         try {
             const list = await getList(target.listId);
-            const candidates = await withSilpoToken(tgId, async (token) => {
+            const shelf = await withSilpoToken(tgId, async (token) => {
                 const context = await getStoreContext(token, await getStorePreference(tgId));
-                const familiarity = await loadFamiliaritySafely(tgId, token);
-                const ranking = { preference: list?.preference ?? 'familiar', familiarity };
-                const [result] = await findProductsForQueries(
-                    token, context, [query], ranking, CANDIDATES_PER_SEARCH
-                );
-                return result?.candidates ?? [];
+                const familiarity = await loadFamiliaritySafely(tgId, context, token);
+                return loadShelf(context, query, {
+                    preference: list?.preference ?? 'familiar',
+                    familiarity,
+                }, sort);
             });
-            await setCandidates(target.itemId, candidates);
-            if (candidates.length) await selectProduct(target.itemId, candidates[0].productId);
-            res.json({ ok: true, candidates });
+
+            const page = shelf.slice(offset, offset + pageSize);
+            // The first page becomes the line's strip, so a guest who searched
+            // and closed the sheet keeps what they found.
+            if (offset === 0 && page.length) {
+                await setCandidates(target.itemId, page.slice(0, CANDIDATES_PER_SEARCH), shelf.length);
+            }
+            res.json({ ok: true, candidates: page, total: shelf.length, offset, sort });
         } catch (error) {
             console.error('[API] Item search failed:', error);
             res.status(502).json({ error: 'Search failed' });
