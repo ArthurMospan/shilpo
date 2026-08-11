@@ -3,11 +3,19 @@ import cors from 'cors';
 import type { Telegraf } from 'telegraf';
 import type { Update } from 'telegraf/types';
 import { buildAuthorizeUrl, completeAuthorization, isConnected, withSilpoToken, SilpoNotConnectedError } from '../silpo/auth';
-import { getStoreContext } from '../silpo/store';
-import { addProductsToCart, clearCart, getCartSummary, SILPO_BASKET_URL } from '../silpo/cart';
-import { findProductsForQueries } from '../silpo/products';
+import {
+    collectStoreOptions,
+    getStoreContext,
+    searchStores,
+    type StoreContext,
+} from '../silpo/store';
+import { getStorePreference, setStorePreference } from '../silpo/store-preference';
+import { addProductsToCart, clearCart, getCartSummary, SILPO_BASKET_URL, type CartSummary } from '../silpo/cart';
+import { CANDIDATES_PER_SEARCH, findProductsForQueries } from '../silpo/products';
 import { loadFamiliaritySafely } from '../silpo/familiarity';
 import {
+    abandonActiveLists,
+    getActiveItems,
     getActiveList,
     getItem,
     getItems,
@@ -16,8 +24,9 @@ import {
     selectProduct,
     setCandidates,
     updateItem,
+    type ListRecord,
 } from '../lists/repository';
-import { buildSelection } from '../lists/flow';
+import { buildSelection, runSearch } from '../lists/flow';
 import { requireTelegramUser } from '../auth/telegram-webapp';
 import { verifyAuthLink } from '../auth/link';
 import { resumePendingList, summarizeCartResult } from '../bot/conversation';
@@ -45,6 +54,17 @@ function deferWork(promise: Promise<unknown>): void {
         }
     }
     void promise;
+}
+
+/**
+ * Raised when the guest is shopping in one store while their Silpo cart still
+ * belongs to another. Carries both sides so the Mini App can name them.
+ */
+class StoreMismatchError extends Error {
+    constructor(readonly context: StoreContext, readonly cart: CartSummary) {
+        super('The Silpo cart belongs to a different store');
+        this.name = 'StoreMismatchError';
+    }
 }
 
 /** Secret Telegram echoes back on every webhook call, proving the update is genuine. */
@@ -145,6 +165,41 @@ export function createApp(bot: Telegraf) {
     // new public route above this line.
     app.use('/api', requireTelegramUser);
 
+    /** Everything the picker screen renders, for one list. */
+    async function listPayload(tgId: number, list: ListRecord) {
+        const { context, cart } = await withSilpoToken(tgId, async (token) => {
+            const storeContext = await getStoreContext(token, await getStorePreference(tgId));
+            return { context: storeContext, cart: await getCartSummary(token, storeContext.shoppingCartId) };
+        });
+        const selection = buildSelection(await getItems(list.listId));
+        return {
+            list: { listId: list.listId, stage: list.stage, storeLabel: context.storeLabel },
+            store: context,
+            cart: { itemCount: cart.itemCount, total: cart.total, isEmpty: cart.isEmpty },
+            items: selection.lines.map(line => ({
+                itemId: line.item.itemId,
+                label: [line.item.query, line.item.note].filter(Boolean).join(', '),
+                rawText: line.item.rawText,
+                quantity: line.quantity,
+                unit: line.item.unit,
+                selectedProductId: line.item.selectedProductId,
+                candidates: line.item.candidates,
+            })),
+            totals: { total: selection.total, productCount: selection.productCount },
+            basketUrl: SILPO_BASKET_URL,
+        };
+    }
+
+    /** Turns a Silpo outage or a missing connection into the right status code. */
+    function respondToSilpoFailure(res: express.Response, error: unknown, what: string): void {
+        if (error instanceof SilpoNotConnectedError) {
+            res.status(401).json({ error: 'Silpo account is not connected', code: 'silpo_not_connected' });
+            return;
+        }
+        console.error(`[API] ${what}:`, error);
+        res.status(502).json({ error: 'Silpo is temporarily unavailable' });
+    }
+
     app.get('/api/list/:listId', async (req, res) => {
         const tgId = req.tgId!;
         const list = await getList(req.params.listId);
@@ -152,37 +207,118 @@ export function createApp(bot: Telegraf) {
             res.status(404).json({ error: 'List not found' });
             return;
         }
+        try {
+            res.json(await listPayload(tgId, list));
+        } catch (error) {
+            respondToSilpoFailure(res, error, 'Failed to load list');
+        }
+    });
 
-        const items = await getItems(list.listId);
-        const selection = buildSelection(items);
+    // ── Mini App home ───────────────────────────────────────────────
+    // The chat menu button has no list id to pass, so the app opens here:
+    // whatever the guest is working on, what is in their Silpo cart, and a way
+    // to start over. Without this the button led to an empty screen.
+    app.get('/api/home', async (req, res) => {
+        const tgId = req.tgId!;
+        const active = await getActiveList(tgId);
+        const activeList = active
+            ? { listId: active.listId, stage: active.stage, itemCount: (await getActiveItems(active.listId)).length }
+            : null;
         try {
             const { context, cart } = await withSilpoToken(tgId, async (token) => {
-                const storeContext = await getStoreContext(token);
+                const storeContext = await getStoreContext(token, await getStorePreference(tgId));
                 return { context: storeContext, cart: await getCartSummary(token, storeContext.shoppingCartId) };
             });
             res.json({
-                list: { listId: list.listId, stage: list.stage, storeLabel: context.storeLabel },
+                connected: true,
+                activeList,
                 store: context,
                 cart: { itemCount: cart.itemCount, total: cart.total, isEmpty: cart.isEmpty },
-                items: selection.lines.map(line => ({
-                    itemId: line.item.itemId,
-                    label: [line.item.query, line.item.note].filter(Boolean).join(', '),
-                    rawText: line.item.rawText,
-                    quantity: line.quantity,
-                    unit: line.item.unit,
-                    selectedProductId: line.item.selectedProductId,
-                    candidates: line.item.candidates,
-                })),
-                totals: { total: selection.total, productCount: selection.productCount },
                 basketUrl: SILPO_BASKET_URL,
             });
         } catch (error) {
-            if (error instanceof SilpoNotConnectedError) {
-                res.status(401).json({ error: 'Silpo account is not connected', code: 'silpo_not_connected' });
+            respondToSilpoFailure(res, error, 'Failed to load home');
+        }
+    });
+
+    /** "Новий список" from inside the Mini App: clear the slate, then invite in chat. */
+    app.post('/api/new-list', async (req, res) => {
+        const tgId = req.tgId!;
+        await abandonActiveLists(tgId);
+        await bot.telegram.sendMessage(
+            tgId,
+            '📝 <b>Готова до нового списку</b>\n\nНадсилай фото списку або пиши товари текстом — по одному в рядку.',
+            { parse_mode: 'HTML' }
+        ).catch(() => undefined);
+        res.json({ ok: true });
+    });
+
+    // ── Store context ───────────────────────────────────────────────
+    app.get('/api/stores/options', async (req, res) => {
+        const tgId = req.tgId!;
+        try {
+            const options = await withSilpoToken(tgId, async (token) => {
+                const context = await getStoreContext(token, await getStorePreference(tgId));
+                return { ...(await collectStoreOptions(token, context)), context };
+            });
+            res.json(options);
+        } catch (error) {
+            respondToSilpoFailure(res, error, 'Failed to load store options');
+        }
+    });
+
+    app.get('/api/stores/search', async (req, res) => {
+        const tgId = req.tgId!;
+        const query = String(req.query.q || '').trim().slice(0, 80);
+        if (query.length < 2) {
+            res.json({ stores: [] });
+            return;
+        }
+        try {
+            res.json({ stores: await withSilpoToken(tgId, token => searchStores(token, query)) });
+        } catch (error) {
+            respondToSilpoFailure(res, error, 'Store search failed');
+        }
+    });
+
+    /**
+     * Switches where the list is priced. Prices, availability and even which
+     * products exist differ per store, so the whole list is searched again —
+     * showing yesterday's cards under a new store's name would be fiction.
+     */
+    app.post('/api/stores/select', async (req, res) => {
+        const tgId = req.tgId!;
+        const branchId = String(req.body?.branchId || '').trim();
+        const deliveryType = String(req.body?.deliveryType || '').trim() || 'DeliveryHome';
+        const label = String(req.body?.label || '').trim().slice(0, 160);
+        if (!branchId) {
+            res.status(400).json({ error: 'Missing branchId' });
+            return;
+        }
+
+        try {
+            // Matching the cart again means the guest has no preference at all,
+            // which keeps them on Silpo's own choice as it changes.
+            const account = await withSilpoToken(tgId, token => getStoreContext(token));
+            const isAccountStore = account.cartBranchId === branchId
+                && account.cartDeliveryType.toLowerCase() === deliveryType.toLowerCase();
+            await setStorePreference(tgId, isAccountStore ? null : { branchId, deliveryType, label });
+
+            const list = await getList(String(req.body?.listId || ''));
+            if (!list || list.tgId !== tgId || list.stage === 'done') {
+                // Nothing to re-price — only the header chip has to catch up.
+                const store = isAccountStore
+                    ? account
+                    : await withSilpoToken(tgId, token =>
+                        getStoreContext(token, { branchId, deliveryType, label }));
+                res.json({ ok: true, store });
                 return;
             }
-            console.error('[API] Failed to load list:', error);
-            res.status(502).json({ error: 'Silpo is temporarily unavailable' });
+
+            await runSearch(tgId, list.listId, list.preference ?? 'familiar');
+            res.json({ ok: true, ...(await listPayload(tgId, (await getList(list.listId))!)) });
+        } catch (error) {
+            respondToSilpoFailure(res, error, 'Store selection failed');
         }
     });
 
@@ -241,10 +377,12 @@ export function createApp(bot: Telegraf) {
         try {
             const list = await getList(target.listId);
             const candidates = await withSilpoToken(tgId, async (token) => {
-                const context = await getStoreContext(token);
+                const context = await getStoreContext(token, await getStorePreference(tgId));
                 const familiarity = await loadFamiliaritySafely(tgId, token);
                 const ranking = { preference: list?.preference ?? 'familiar', familiarity };
-                const [result] = await findProductsForQueries(token, context, [query], ranking, 12);
+                const [result] = await findProductsForQueries(
+                    token, context, [query], ranking, CANDIDATES_PER_SEARCH
+                );
                 return result?.candidates ?? [];
             });
             await setCandidates(target.itemId, candidates);
@@ -272,7 +410,14 @@ export function createApp(bot: Telegraf) {
 
         try {
             const result = await withSilpoToken(tgId, async (token) => {
-                const context = await getStoreContext(token);
+                const context = await getStoreContext(token, await getStorePreference(tgId));
+                // A Silpo cart belongs to one store. Products priced elsewhere
+                // cannot join what is already in it, so the guest has to agree
+                // to empty it first — never something to do behind their back.
+                const before = await getCartSummary(token, context.shoppingCartId);
+                if (!context.matchesCart && !before.isEmpty && mode !== 'replace') {
+                    throw new StoreMismatchError(context, before);
+                }
                 if (mode === 'replace') await clearCart(token, context.shoppingCartId);
                 const added = await addProductsToCart(
                     token,
@@ -292,7 +437,7 @@ export function createApp(bot: Telegraf) {
             await bot.telegram.sendMessage(
                 tgId,
                 `${summarizeCartResult(result.added, result.cart.total, mode)}\n\n` +
-                `Магазин: ${result.context.storeLabel}\n` +
+                `${result.context.storeLabel}\n` +
                 'Залишилось підтвердити замовлення в Сільпо 👇',
                 {
                     parse_mode: 'HTML',
@@ -310,6 +455,17 @@ export function createApp(bot: Telegraf) {
                 basketUrl: SILPO_BASKET_URL,
             });
         } catch (error) {
+            if (error instanceof StoreMismatchError) {
+                res.status(409).json({
+                    error: 'The cart belongs to another store',
+                    code: 'store_mismatch',
+                    cartStoreLabel: error.context.cartStoreLabel,
+                    storeLabel: error.context.storeLabel,
+                    cartItemCount: error.cart.itemCount,
+                    cartTotal: error.cart.total,
+                });
+                return;
+            }
             if (error instanceof SilpoNotConnectedError) {
                 res.status(401).json({ error: 'Silpo account is not connected', code: 'silpo_not_connected' });
                 return;

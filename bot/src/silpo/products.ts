@@ -27,6 +27,17 @@ export interface ProductCandidate {
 
 const MAX_BATCH_QUERIES = 30;
 
+/**
+ * How many products each list line offers. Six looked tidy and was useless:
+ * with a dozen brands of milk on the shelf, six cards mean the thing the guest
+ * actually buys is usually not among them. The strip scrolls, so a long tail
+ * costs nothing but bytes — and the ranking keeps the best first either way.
+ */
+export const CANDIDATES_PER_LINE = 20;
+
+/** A hand-typed search is a hunt for something specific; give it the wide net. */
+export const CANDIDATES_PER_SEARCH = 40;
+
 function numberOf(value: unknown): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
@@ -242,7 +253,7 @@ export async function findProductsForQueries(
     context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
     queries: string[],
     ranking: RankingContext,
-    limitPerQuery = 6,
+    limitPerQuery = CANDIDATES_PER_LINE,
     now = new Date()
 ): Promise<QueryResult[]> {
     const unique = [...new Set(queries.map(query => query.trim()).filter(Boolean))];

@@ -32,28 +32,26 @@ export async function applyAnswer(question: PendingQuestion, answer: string): Pr
         return { summary: `🚫 ${label(item)} — прибрала зі списку`, dropped: true, askedAgain: false };
     }
 
-    if (question.kind === 'quantity') {
-        const parsed = quantityFromAnswer(trimmed);
-        if (parsed) {
-            await updateItem(item.itemId, {
-                quantity: parsed.quantity,
-                needsQuantity: false,
-                ...(parsed.unit ? { unit: parsed.unit } : {}),
-            });
-            const unit = parsed.unit || item.unit || 'шт';
-            return { summary: `✅ ${label(item)} — ${parsed.quantity} ${unit}`, dropped: false, askedAgain: false };
-        }
+    // A bare number answering a wording question means an amount, not a
+    // product. Handling it here keeps a tap on "2" off the model round trip.
+    const parsed = quantityFromAnswer(trimmed);
+    if (parsed) {
+        await updateItem(item.itemId, {
+            quantity: parsed.quantity,
+            needsQuantity: false,
+            ...(parsed.unit ? { unit: parsed.unit } : {}),
+        });
+        await clearClarification(item.itemId);
+        const unit = parsed.unit || item.unit || 'шт';
+        return { summary: `✅ ${label(item)} — ${parsed.quantity} ${unit}`, dropped: false, askedAgain: false };
     }
 
-    if (question.kind === 'clarification' && isAffirmative(trimmed)) {
+    if (isAffirmative(trimmed)) {
         await clearClarification(item.itemId);
-        if (item.needsQuantity) {
-            return { summary: `✅ ${label(item)} — підтверджено`, dropped: false, askedAgain: false };
-        }
         return { summary: `✅ ${label(item)}`, dropped: false, askedAgain: false };
     }
 
-    if (question.kind === 'clarification' && isNegative(trimmed)) {
+    if (isNegative(trimmed)) {
         await setClarification(item.itemId, `Напиши, будь ласка, що саме там написано замість «${item.query}»`, []);
         return { summary: `✏️ ${label(item)} — уточнюємо`, dropped: false, askedAgain: true };
     }

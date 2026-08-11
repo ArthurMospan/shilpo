@@ -156,9 +156,14 @@ export async function searchAndInvite(
         if (!found.length) {
             await ctx.reply(
                 '😞 <b>Нічого зі списку не знайшлося</b>\n\n' +
-                `Магазин: <b>${escapeHtml(context.storeLabel)}</b>\n\n` +
-                'Спробуй змінити магазин або спосіб доставки в застосунку Сільпо — і надішли список ще раз.',
-                { parse_mode: 'HTML' }
+                `${escapeHtml(context.storeLabel)}\n\n` +
+                'Відкрий список і зміни магазин угорі екрана — я перешукаю все за його цінами.',
+                {
+                    parse_mode: 'HTML',
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.webApp('📍 Змінити магазин', pickerUrl(listId))],
+                    ]),
+                }
             );
             return;
         }
@@ -172,7 +177,7 @@ export async function searchAndInvite(
             `✅ <b>Знайшла ${found.length} ${pluralizeItems(found.length)}</b>`,
             `📍 ${escapeHtml(context.storeLabel)}`,
             '',
-            `💰 Орієнтовно: <b>${formatPrice(estimate)}</b>`,
+            `💰 Орієнтовно: <b>${formatPrice(estimate)}</b> — кількість підкрутиш у застосунку`,
         ];
         if (context.deliveryPrice !== null) {
             const free = context.freeDeliveryFrom

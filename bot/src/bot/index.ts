@@ -5,6 +5,7 @@ import { GeminiUnavailableError } from '../ai/gemini';
 import { parseListFromImage, parseListFromText, type ParsedItem } from '../ai/list-parser';
 import { isConnected, disconnect, withSilpoToken, SilpoNotConnectedError } from '../silpo/auth';
 import { getStoreContext } from '../silpo/store';
+import { getStorePreference } from '../silpo/store-preference';
 import { getCartSummary, SILPO_BASKET_URL } from '../silpo/cart';
 import { formatPrice } from '../silpo/products';
 import {
@@ -180,7 +181,7 @@ export function createBot(): Telegraf {
         if (webappUrl()) {
             await ctx.setChatMenuButton({
                 type: 'web_app',
-                text: '🛒 Мій список',
+                text: '🍊 Шільпо',
                 web_app: { url: webappUrl() },
             }).catch(() => undefined);
         }
@@ -221,7 +222,7 @@ export function createBot(): Telegraf {
         const tgId = tgIdOf(ctx);
         try {
             const summary = await withSilpoToken(tgId, async (token) => {
-                const context = await getStoreContext(token);
+                const context = await getStoreContext(token, await getStorePreference(tgId));
                 const cart = await getCartSummary(token, context.shoppingCartId);
                 return { context, cart };
             });
@@ -238,7 +239,7 @@ export function createBot(): Telegraf {
             const more = summary.cart.lines.length > 20 ? `\n…і ще ${summary.cart.lines.length - 20}` : '';
             await ctx.reply(
                 `🛒 <b>У кошику ${summary.cart.itemCount} ${pluralizeProducts(summary.cart.itemCount)}</b>\n` +
-                `Магазин: ${escapeHtml(summary.context.storeLabel)}\n\n${lines.join('\n')}${more}\n\n` +
+                `${escapeHtml(summary.context.storeLabel)}\n\n${lines.join('\n')}${more}\n\n` +
                 `Разом: <b>${formatPrice(summary.cart.total)}</b>`,
                 {
                     parse_mode: 'HTML',

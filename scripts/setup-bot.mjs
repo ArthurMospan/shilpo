@@ -83,7 +83,7 @@ async function main() {
 
     if (webappUrl) {
         await call('setChatMenuButton', {
-            menu_button: { type: 'web_app', text: '🛒 Мій список', web_app: { url: webappUrl } },
+            menu_button: { type: 'web_app', text: '🍊 Шільпо', web_app: { url: webappUrl } },
         });
         console.log(`✅ Menu button opens ${webappUrl}`);
     } else {

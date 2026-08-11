@@ -1,5 +1,6 @@
 import { withSilpoToken } from '../silpo/auth';
 import { getStoreContext, type StoreContext } from '../silpo/store';
+import { getStorePreference } from '../silpo/store-preference';
 import { findProductsForQueries } from '../silpo/products';
 import { loadFamiliaritySafely } from '../silpo/familiarity';
 import type { SearchPreference } from '../silpo/ranking';
@@ -19,35 +20,23 @@ export interface PendingQuestion {
     item: ListItemRecord;
     question: string;
     options: string[];
-    /** A missing amount is answered with numbers, a reading check with words. */
-    kind: 'quantity' | 'clarification';
-}
-
-function quantityQuestion(item: ListItemRecord): PendingQuestion {
-    return {
-        item,
-        question: `Скільки брати: ${[item.query, item.note].filter(Boolean).join(', ')}?`,
-        options: ['1', '2', '3'],
-        kind: 'quantity',
-    };
-}
-
-function clarificationQuestion(item: ListItemRecord, clarification: Clarification): PendingQuestion {
-    // An empty option list is meaningful: it marks a question that only a
-    // free-form reply can answer, such as "what does this word say?".
-    return { item, question: clarification.question, options: clarification.options, kind: 'clarification' };
 }
 
 /**
- * The one open question for a line, if any. A reading check comes before a
- * quantity question — there is no point asking how much of something the
- * guest may not have written at all.
+ * The one open question for a line, if any.
+ *
+ * A missing amount is deliberately *not* a question. The Mini App puts a
+ * stepper under every line, so asking "скільки молока?" in chat buys nothing
+ * and costs the guest a tap before they have even seen the products. Only
+ * things that change *which* product we search for are worth interrupting for.
  */
 export function questionForItem(item: ListItemRecord): PendingQuestion | null {
     if (item.dropped) return null;
-    if (item.clarification?.question) return clarificationQuestion(item, item.clarification);
-    if (item.needsQuantity) return quantityQuestion(item);
-    return null;
+    const clarification: Clarification | null = item.clarification;
+    if (!clarification?.question) return null;
+    // An empty option list is meaningful: it marks a question that only a
+    // free-form reply can answer, such as "what does this word say?".
+    return { item, question: clarification.question, options: clarification.options };
 }
 
 export async function pendingQuestions(listId: string): Promise<PendingQuestion[]> {
@@ -78,7 +67,7 @@ export async function runSearch(
     await setStage(listId, 'searching');
 
     return withSilpoToken(tgId, async (token) => {
-        const context = await getStoreContext(token);
+        const context = await getStoreContext(token, await getStorePreference(tgId));
         await setStoreContext(listId, {
             branchId: context.branchId,
             deliveryType: context.deliveryType,

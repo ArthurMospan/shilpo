@@ -1,8 +1,22 @@
 import { telegram } from './telegram';
-import type { CheckoutResponse, ListResponse, ProductCandidate } from './types';
+import type {
+    CheckoutResponse,
+    HomeResponse,
+    ListResponse,
+    ProductCandidate,
+    SelectStoreResponse,
+    StoreOption,
+    StoreOptions,
+} from './types';
 
 export class ApiError extends Error {
-    constructor(message: string, readonly status: number, readonly code = '') {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly code = '',
+        /** The rest of the error body — a 409 carries which stores clash. */
+        readonly details: Record<string, unknown> = {}
+    ) {
         super(message);
         this.name = 'ApiError';
     }
@@ -24,7 +38,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         throw new ApiError(
             String(body?.error || `HTTP ${response.status}`),
             response.status,
-            String(body?.code || '')
+            String(body?.code || ''),
+            body && typeof body === 'object' ? body : {}
         );
     }
     return response.json() as Promise<T>;
@@ -32,6 +47,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export function loadList(listId: string): Promise<ListResponse> {
     return request<ListResponse>(`/api/list/${encodeURIComponent(listId)}`);
+}
+
+export function loadHome(): Promise<HomeResponse> {
+    return request<HomeResponse>('/api/home');
+}
+
+export function startNewList(): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>('/api/new-list', { method: 'POST' });
 }
 
 interface Totals { total: number; productCount: number }
@@ -72,5 +95,29 @@ export function checkout(listId: string, mode: 'append' | 'replace'): Promise<Ch
     return request<CheckoutResponse>(`/api/list/${encodeURIComponent(listId)}/checkout`, {
         method: 'POST',
         body: JSON.stringify({ mode }),
+    });
+}
+
+export function loadStoreOptions(): Promise<StoreOptions> {
+    return request<StoreOptions>('/api/stores/options');
+}
+
+export function searchStores(query: string): Promise<{ stores: StoreOption[] }> {
+    return request<{ stores: StoreOption[] }>(`/api/stores/search?q=${encodeURIComponent(query)}`);
+}
+
+/**
+ * Switching store re-prices the whole list, so the server answers with the
+ * full list payload rather than an acknowledgement.
+ */
+export function selectStore(store: StoreOption, listId: string): Promise<SelectStoreResponse> {
+    return request<SelectStoreResponse>('/api/stores/select', {
+        method: 'POST',
+        body: JSON.stringify({
+            branchId: store.branchId,
+            deliveryType: store.deliveryType,
+            label: store.shortLabel,
+            listId,
+        }),
     });
 }

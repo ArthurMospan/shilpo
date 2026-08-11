@@ -35,6 +35,9 @@ const schemaStatements = [
         mcp_client_id TEXT,
         mcp_expires_at INTEGER,
         first_name TEXT,
+        store_branch_id TEXT,
+        store_delivery_type TEXT,
+        store_label TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`,
     // One row per shopping list the guest starts. `stage` drives the chat
@@ -111,6 +114,9 @@ async function bootstrap(): Promise<void> {
         ['users', 'mcp_expires_at', 'INTEGER'],
         ['lists', 'chat_message_id', 'INTEGER'],
         ['lists', 'preference', 'TEXT'],
+        ['users', 'store_branch_id', 'TEXT'],
+        ['users', 'store_delivery_type', 'TEXT'],
+        ['users', 'store_label', 'TEXT'],
     ] as const) {
         try {
             await runSchemaStatement(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
