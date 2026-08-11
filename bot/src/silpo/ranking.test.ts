@@ -94,6 +94,32 @@ test('something the guest already buys wins by default', () => {
     assert.equal(ranked[0].productId, familiar.productId);
 });
 
+test('"cheapest" is not overruled by what the guest usually buys', () => {
+    const usual = product({ title: 'Пиво Оболонь світле 0,5 л', price: 34 });
+    const ranked = rankCandidates([
+        usual,
+        product({ title: 'Пиво Чернігівське світле 0,5 л', price: 21 }),
+        product({ title: 'Пиво Жигулівське світле 0,5 л', price: 19 }),
+    ], 'пиво', context({
+        preference: 'cheap',
+        familiarity: { productIds: new Set([usual.productId]), titles: new Set() },
+    }));
+    assert.equal(ranked[0].price, 19, 'the guest asked for the cheapest, not for the usual');
+    assert.deepEqual(ranked.map(candidate => candidate.price), [19, 21, 34]);
+});
+
+test('familiarity still breaks a tie between equally cheap products', () => {
+    const usual = product({ title: 'Пиво Оболонь світле 0,5 л', price: 21 });
+    const ranked = rankCandidates([
+        product({ title: 'Пиво Чернігівське світле 0,5 л', price: 21 }),
+        usual,
+    ], 'пиво', context({
+        preference: 'cheap',
+        familiarity: { productIds: new Set([usual.productId]), titles: new Set() },
+    }));
+    assert.equal(ranked[0].productId, usual.productId);
+});
+
 test('an out-of-stock product never leads, however well it matches', () => {
     const ranked = rankCandidates([
         product({ title: 'Молоко Яготинське 2,5% 900 г', price: 20, inStock: false }),

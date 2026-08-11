@@ -96,6 +96,29 @@ function discountPercent(product: ProductCandidate): number {
     return Math.round((1 - product.price / product.oldPrice) * 100);
 }
 
+/**
+ * How much the guest's stated preference is worth. It has to outweigh every
+ * tiebreaker below it, or the answer stops being an answer to the question
+ * that was asked.
+ */
+const PREFERENCE_WEIGHT = 400;
+
+/**
+ * How much "you have bought this before" is worth, per preference.
+ *
+ * At a flat 250 it quietly overruled price: the whole cheap-to-expensive
+ * spread is worth 400, so a familiar product at the top of the range beat the
+ * cheapest one on the shelf. A guest who taps «Найдешевше» is telling us that
+ * habit is exactly what they want set aside — so outside «звичне» this stays a
+ * tiebreaker between products the preference already rates equally.
+ */
+const FAMILIARITY_BONUS: Record<SearchPreference, number> = {
+    familiar: 250,
+    cheap: 60,
+    promo: 60,
+    premium: 60,
+};
+
 export function scoreCandidate(
     product: ProductCandidate,
     query: string,
@@ -106,21 +129,21 @@ export function scoreCandidate(
     if (!headWordPresent(product.title, query)) score -= 600;
     // Something the guest cannot buy today is never the right default.
     if (!product.inStock) score -= 2000;
-    if (isFamiliar(product, context.familiarity)) score += 250;
+    if (isFamiliar(product, context.familiarity)) score += FAMILIARITY_BONUS[context.preference];
 
     const span = Math.max(1, priceRange.max - priceRange.min);
     const relativePrice = (product.price - priceRange.min) / span;
 
     switch (context.preference) {
         case 'cheap':
-            score += (1 - relativePrice) * 200;
+            score += (1 - relativePrice) * PREFERENCE_WEIGHT;
             break;
         case 'premium':
-            score += relativePrice * 200;
+            score += relativePrice * PREFERENCE_WEIGHT;
             break;
         case 'promo':
-            if (product.hasPromo) score += 140;
-            score += Math.min(discountPercent(product), 60) * 3;
+            if (product.hasPromo) score += PREFERENCE_WEIGHT * 0.4;
+            score += Math.min(discountPercent(product), 60) * (PREFERENCE_WEIGHT * 0.01);
             break;
         case 'familiar':
             // Familiarity already carries this preference; nudge the safest
