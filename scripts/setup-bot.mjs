@@ -30,11 +30,34 @@ if (!token) {
     process.exit(1);
 }
 
-const webappUrl = (() => {
+// The menu button is global to the bot, but WEBAPP_URL usually comes from
+// bot/.env — a development file that may still hold a placeholder or a tunnel
+// address. Shipping one of those to every chat is silent and hard to notice,
+// because Telegram accepts the write and getChatMenuButton answers from a
+// stale cache. So refuse anything that cannot possibly be the public address.
+const UNUSABLE_HOSTS = /(^|\.)(example\.(com|org|net)|invalid|test|localhost)$|^replace-me|^127\.|^0\.0\.0\.0$/i;
+
+function resolveWebappUrl() {
     const raw = (process.env.WEBAPP_URL || '').trim().replace(/\/+$/, '');
     if (!raw) return '';
-    return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-})();
+    const normalized = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    let host;
+    try {
+        host = new URL(normalized).hostname;
+    } catch {
+        throw new Error(`WEBAPP_URL is not a valid URL: ${raw}`);
+    }
+    if (UNUSABLE_HOSTS.test(host) || host.includes('replace-me')) {
+        throw new Error(
+            `WEBAPP_URL points at a placeholder (${host}). Pass the real public address:\n` +
+            '  WEBAPP_URL=https://your-project.vercel.app npm run bot:setup'
+        );
+    }
+    if (!normalized.startsWith('https://')) {
+        throw new Error(`WEBAPP_URL must be https for Telegram to open it: ${normalized}`);
+    }
+    return normalized;
+}
 
 async function call(method, body) {
     const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
@@ -66,6 +89,7 @@ const COMMANDS = [
 ];
 
 async function main() {
+    const webappUrl = resolveWebappUrl();
     const me = await call('getMe');
     console.log(`Configuring @${me.username} (${me.first_name})`);
 
@@ -95,8 +119,13 @@ async function main() {
         description: (await call('getMyDescription')).description,
         shortDescription: (await call('getMyShortDescription')).short_description,
         commands: (await call('getMyCommands')).map(entry => `/${entry.command}`).join(' '),
-        menuButton: (await call('getChatMenuButton')).type,
     }, null, 2));
+
+    // Deliberately not read back: getChatMenuButton answers from a cache that
+    // keeps returning the previous value long after a successful write, so
+    // echoing it here would report a failure that did not happen — or hide one
+    // that did. The write itself throws on anything but ok:true.
+    if (webappUrl) console.log(`\nMenu button written (not readable back through the API): ${webappUrl}`);
 }
 
 main().catch(error => {
