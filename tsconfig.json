@@ -1,0 +1,17 @@
+{
+  "//": "Vercel compiles api/ against the tsconfig at the repository root, not bot/tsconfig.json. Keeping the two in sync is what stops a function build from failing on settings the local build never applied.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2023"],
+    "strict": true,
+    "noImplicitAny": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node"
+  },
+  "include": ["api/**/*.ts", "bot/src/**/*.ts"],
+  "exclude": ["node_modules", "**/node_modules", "webapp", "bot/dist", "**/*.test.ts"]
+}

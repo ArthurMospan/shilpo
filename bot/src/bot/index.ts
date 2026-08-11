@@ -56,6 +56,19 @@ function tgIdOf(ctx: Context): number {
     return Number(ctx.from?.id || 0);
 }
 
+/**
+ * Telegraf's `message(...)` filters narrow to an intersection that drops
+ * `caption`, even though photo and document messages carry one. Reading it
+ * defensively keeps the caption without depending on that narrowing.
+ */
+function captionOf(message: unknown): string {
+    if (message && typeof message === 'object' && 'caption' in message) {
+        const caption = (message as { caption?: unknown }).caption;
+        if (typeof caption === 'string') return caption;
+    }
+    return '';
+}
+
 async function downloadPhotoAsBase64(ctx: Context, fileId: string): Promise<string> {
     const link = await ctx.telegram.getFileLink(fileId);
     const response = await fetch(link.href);
@@ -220,8 +233,7 @@ export function createBot(): Telegraf {
         const tgId = tgIdOf(ctx);
         const photos = ctx.message.photo;
         const largest = photos[photos.length - 1];
-        const caption = ctx.message.caption || '';
-        await startList(ctx, tgId, 'photo', caption, async () => {
+        await startList(ctx, tgId, 'photo', captionOf(ctx.message), async () => {
             const base64 = await downloadPhotoAsBase64(ctx, largest.file_id);
             return parseListFromImage(base64, 'image/jpeg');
         });
@@ -236,7 +248,7 @@ export function createBot(): Telegraf {
             return;
         }
         const tgId = tgIdOf(ctx);
-        await startList(ctx, tgId, 'photo', ctx.message.caption || '', async () => {
+        await startList(ctx, tgId, 'photo', captionOf(ctx.message), async () => {
             const base64 = await downloadPhotoAsBase64(ctx, document.file_id);
             return parseListFromImage(base64, mimeType);
         });
