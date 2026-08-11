@@ -21,6 +21,7 @@ import { requireTelegramUser } from '../auth/telegram-webapp';
 import { verifyAuthLink } from '../auth/link';
 import { resumePendingList, summarizeCartResult } from '../bot/conversation';
 import { connectedPage, errorPage } from './pages';
+import { publicBaseUrl as configuredBaseUrl } from '../config';
 
 // On Vercel a function may be frozen the moment it responds, which would cut
 // off a reply the bot is still composing. waitUntil keeps the invocation alive
@@ -84,7 +85,7 @@ export function createApp(bot: Telegraf) {
         res.json({
             status: 'ok',
             checkedAt: new Date().toISOString(),
-            webappUrl: (process.env.WEBAPP_URL || '').trim().replace(/\/+$/, ''),
+            webappUrl: configuredBaseUrl(),
             database: process.env.TURSO_DATABASE_URL ? 'turso' : 'local-sqlite',
             mode: process.env.VERCEL ? 'webhook' : 'polling',
         });
@@ -329,7 +330,7 @@ async function totalsFor(listId: string) {
 }
 
 function publicBaseUrl(req: express.Request): string {
-    const configured = (process.env.WEBAPP_URL || '').trim().replace(/\/+$/, '');
+    const configured = configuredBaseUrl();
     if (configured) return configured;
     const proto = req.headers['x-forwarded-proto'] || req.protocol;
     const host = req.headers['x-forwarded-host'] || req.headers.host;

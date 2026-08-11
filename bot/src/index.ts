@@ -3,11 +3,12 @@ import { createBot } from './bot/index';
 import { startServer } from './server/index';
 import { geminiConfigured } from './ai/gemini';
 import { dbReady } from './db/index';
+import { publicBaseUrl } from './config';
 
 dotenv.config();
 
 async function main(): Promise<void> {
-    const webappUrl = (process.env.WEBAPP_URL || '').trim();
+    const webappUrl = publicBaseUrl();
     if (!/^https:\/\//i.test(webappUrl)) {
         console.error('❌ WEBAPP_URL must be a public HTTPS address — Telegram refuses to open a Mini App otherwise.');
         process.exit(1);

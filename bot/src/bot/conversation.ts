@@ -11,9 +11,10 @@ import {
 import { nextQuestion, questionForItem, runSearch, type PendingQuestion } from '../lists/flow';
 import { escapeHtml, itemPreviewLine, pluralizeDetails, pluralizeItems, pluralizeProducts } from './format';
 import { signAuthLink } from '../auth/link';
+import { publicBaseUrl } from '../config';
 
 export function webappUrl(): string {
-    return (process.env.WEBAPP_URL || '').trim().replace(/\/+$/, '');
+    return publicBaseUrl();
 }
 
 export function pickerUrl(listId: string): string {
