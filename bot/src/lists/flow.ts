@@ -1,6 +1,8 @@
 import { withSilpoToken } from '../silpo/auth';
 import { getStoreContext, type StoreContext } from '../silpo/store';
 import { findProductsForQueries } from '../silpo/products';
+import { loadFamiliaritySafely } from '../silpo/familiarity';
+import type { SearchPreference } from '../silpo/ranking';
 import { buildSelection, type Selection, type SelectionLine } from './selection';
 import {
     getActiveItems,
@@ -68,7 +70,11 @@ export interface SearchOutcome {
  * store, stores the candidates and preselects the best match so the Mini App
  * opens on a ready-to-confirm basket rather than an empty form.
  */
-export async function runSearch(tgId: number, listId: string): Promise<SearchOutcome> {
+export async function runSearch(
+    tgId: number,
+    listId: string,
+    preference: SearchPreference = 'familiar'
+): Promise<SearchOutcome> {
     await setStage(listId, 'searching');
 
     return withSilpoToken(tgId, async (token) => {
@@ -81,7 +87,8 @@ export async function runSearch(tgId: number, listId: string): Promise<SearchOut
 
         const items = await getActiveItems(listId);
         const queries = items.map(item => [item.query, item.note].filter(Boolean).join(' ').trim());
-        const results = await findProductsForQueries(token, context, queries);
+        const familiarity = await loadFamiliaritySafely(tgId, token);
+        const results = await findProductsForQueries(token, context, queries, { preference, familiarity });
 
         const found: ListItemRecord[] = [];
         const missing: ListItemRecord[] = [];

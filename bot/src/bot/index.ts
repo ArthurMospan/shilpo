@@ -13,7 +13,9 @@ import {
     ensureUser,
     getActiveList,
     getItem,
+    getList,
     setChatMessageId,
+    setPreference,
 } from '../lists/repository';
 import { nextQuestion, questionForItem } from '../lists/flow';
 import { applyAnswer } from '../lists/answers';
@@ -21,6 +23,9 @@ import {
     advanceConversation,
     askToConnect,
     connectKeyboard,
+    isKnownPreference,
+    PREFERENCE_CONFIRMATIONS,
+    searchAndInvite,
     sendRecognizedList,
     webappUrl,
 } from './conversation';
@@ -28,26 +33,28 @@ import { escapeHtml, pluralizeProducts } from './format';
 
 const MAX_LIST_TEXT_LENGTH = 3000;
 
-const WELCOME = `Привіт! Я <b>Шільпо</b> 🍊
+const WELCOME = `🍊 Привіт! Я <b>Шільпо</b>
 
-Надішли мені <b>фото списку покупок</b> — хоч рукописного на клаптику паперу — або просто напиши товари текстом.
+Перетворюю звичайний список покупок на <b>готовий кошик Сільпо</b>.
 
-Далі я:
-1️⃣ прочитаю список і уточню деталі, якщо щось незрозуміло;
-2️⃣ знайду кожен товар у <b>твоєму</b> магазині Сільпо з актуальними цінами;
-3️⃣ покажу варіанти з фото, щоб ти обрав саме те, що треба;
-4️⃣ складу все в кошик Сільпо — і ти одразу переходиш до оформлення.
+Надішли <b>фото списку</b> — хоч рукописного на клаптику паперу — або просто напиши товари текстом.
 
-Спробуй просто сфотографувати свій список 📸`;
+Що буде далі:
+1️⃣ прочитаю список і уточню, якщо щось незрозуміло
+2️⃣ знайду кожен товар у <b>твоєму</b> магазині з реальними цінами
+3️⃣ покажу варіанти з фото — обереш саме те, що треба
+4️⃣ складу все в кошик, і ти йдеш оформлювати
 
-const HELP = `<b>Як користуватися Шільпо</b>
+📸 Спробуй прямо зараз — сфотографуй свій список`;
 
-📸 <b>Фото</b> — сфотографуй список покупок, навіть від руки.
-✍️ <b>Текст</b> — напиши товари, кожен з нового рядка.
+const HELP = `🍊 <b>Як користуватися Шільпо</b>
 
-Команди:
+📸 <b>Фото</b> — сфотографуй список, навіть написаний від руки
+✍️ <b>Текст</b> — напиши товари, кожен з нового рядка
+
+<b>Команди</b>
 /new — почати новий список
-/cart — показати мій кошик Сільпо
+/cart — мій кошик Сільпо
 /connect — підключити Кабінет Сільпо
 /disconnect — відключити акаунт
 /help — ця довідка`;
@@ -97,18 +104,25 @@ async function startList(
         await ctx.telegram.deleteMessage(thinking.chat.id, thinking.message_id).catch(() => undefined);
         if (error instanceof GeminiUnavailableError) {
             console.error('[Bot] Gemini unavailable:', error.message);
-            await ctx.reply('Розпізнавання зараз недоступне 😞 Спробуй, будь ласка, за хвилину.');
+            await ctx.reply(
+                '😞 <b>Розпізнавання зараз недоступне</b>\n\nСпробуй, будь ласка, за хвилину.',
+                { parse_mode: 'HTML' }
+            );
             return;
         }
         console.error('[Bot] List parsing failed:', error);
-        await ctx.reply('Не вдалося прочитати список. Спробуй ще раз або надішли текстом.');
+        await ctx.reply(
+            '😞 <b>Не вдалося прочитати список</b>\n\nСпробуй ще раз або надішли текстом.',
+            { parse_mode: 'HTML' }
+        );
         return;
     }
     await ctx.telegram.deleteMessage(thinking.chat.id, thinking.message_id).catch(() => undefined);
 
     if (!items.length) {
         await ctx.reply(
-            'Не знайшла тут жодного товару 🤔\n\nНадішли фото чіткіше або напиши список текстом — по товару в рядку.'
+            '🤔 <b>Не знайшла тут жодного товару</b>\n\nНадішли фото чіткіше або напиши список текстом — по товару в рядку.',
+            { parse_mode: 'HTML' }
         );
         return;
     }
@@ -178,7 +192,10 @@ export function createBot(): Telegraf {
         const tgId = tgIdOf(ctx);
         await ensureUser(tgId, ctx.from?.first_name);
         if (await isConnected(tgId)) {
-            await ctx.reply('Кабінет Сільпо вже підключено ✅\n\nНадсилай список — і я почну.');
+            await ctx.reply(
+                '✅ <b>Кабінет Сільпо вже підключено</b>\n\nНадсилай список — і я почну.',
+                { parse_mode: 'HTML' }
+            );
             return;
         }
         await askToConnect(ctx, tgId, '🔗 Підключимо твій Кабінет Сільпо.');
@@ -186,12 +203,18 @@ export function createBot(): Telegraf {
 
     bot.command('disconnect', async (ctx) => {
         await disconnect(tgIdOf(ctx));
-        await ctx.reply('Акаунт Сільпо відключено. Можеш підключити знову командою /connect.');
+        await ctx.reply(
+            '🔓 <b>Акаунт Сільпо відключено</b>\n\nПідключити знову — /connect',
+            { parse_mode: 'HTML' }
+        );
     });
 
     bot.command('new', async (ctx) => {
         await abandonActiveLists(tgIdOf(ctx));
-        await ctx.reply('Готова до нового списку 📝\n\nНадсилай фото або пиши товари текстом.');
+        await ctx.reply(
+            '📝 <b>Готова до нового списку</b>\n\nНадсилай фото або пиши товари текстом.',
+            { parse_mode: 'HTML' }
+        );
     });
 
     bot.command('cart', async (ctx) => {
@@ -203,7 +226,10 @@ export function createBot(): Telegraf {
                 return { context, cart };
             });
             if (summary.cart.isEmpty) {
-                await ctx.reply('Твій кошик Сільпо порожній 🛒\n\nНадішли список — і я його наповню.');
+                await ctx.reply(
+                    '🛒 <b>Твій кошик Сільпо порожній</b>\n\nНадішли список — і я його наповню.',
+                    { parse_mode: 'HTML' }
+                );
                 return;
             }
             const lines = summary.cart.lines
@@ -225,7 +251,7 @@ export function createBot(): Telegraf {
                 return;
             }
             console.error('[Bot] Cart command failed:', error);
-            await ctx.reply('Не вдалося отримати кошик. Спробуй ще раз трохи пізніше.');
+            await ctx.reply('😞 Не вдалося отримати кошик. Спробуй ще раз трохи пізніше.');
         }
     });
 
@@ -244,7 +270,7 @@ export function createBot(): Telegraf {
         const document = ctx.message.document;
         const mimeType = document.mime_type || '';
         if (!mimeType.startsWith('image/')) {
-            await ctx.reply('Я розумію фото списку або текст. Надішли, будь ласка, зображення.');
+            await ctx.reply('📎 Я розумію <b>фото</b> списку або <b>текст</b>. Надішли, будь ласка, зображення.', { parse_mode: 'HTML' });
             return;
         }
         const tgId = tgIdOf(ctx);
@@ -272,7 +298,10 @@ export function createBot(): Telegraf {
         }
 
         if (text.length > MAX_LIST_TEXT_LENGTH) {
-            await ctx.reply('Список задовгий 😅 Надішли, будь ласка, частинами — до 3000 символів.');
+            await ctx.reply(
+                '😅 <b>Список задовгий</b>\n\nНадішли частинами — до 3000 символів.',
+                { parse_mode: 'HTML' }
+            );
             return;
         }
         await startList(ctx, tgId, 'text', text, () => parseListFromText(text));
@@ -296,9 +325,26 @@ export function createBot(): Telegraf {
         await processAnswer(ctx, tgIdOf(ctx), itemId, answer);
     });
 
+    bot.action(/^pref:([A-Za-z0-9_-]{4,32}):([a-z]{4,10})$/, async (ctx) => {
+        const [, listId, preference] = ctx.match;
+        if (!isKnownPreference(preference)) {
+            await ctx.answerCbQuery('Не впізнала цей варіант');
+            return;
+        }
+        const list = await getList(listId);
+        if (!list || list.tgId !== tgIdOf(ctx)) {
+            await ctx.answerCbQuery('Цей список уже неактуальний');
+            return;
+        }
+        await ctx.answerCbQuery();
+        await setPreference(listId, preference);
+        await markQuestionAnswered(ctx, PREFERENCE_CONFIRMATIONS[preference]);
+        await searchAndInvite(ctx, tgIdOf(ctx), listId, preference);
+    });
+
     bot.action(/^other:([A-Za-z0-9_-]{4,32})$/, async (ctx) => {
         await ctx.answerCbQuery();
-        await ctx.reply('Напиши свій варіант повідомленням — я врахую 👇');
+        await ctx.reply('✏️ Напиши свій варіант повідомленням — я врахую.');
     });
 
     bot.action(/^drop:([A-Za-z0-9_-]{4,32})$/, async (ctx) => {

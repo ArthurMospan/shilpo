@@ -2,6 +2,7 @@ import { Markup, type Telegraf } from 'telegraf';
 import type { Context } from 'telegraf';
 import { SilpoNotConnectedError } from '../silpo/auth';
 import { formatPrice } from '../silpo/products';
+import { SEARCH_PREFERENCES, type SearchPreference } from '../silpo/ranking';
 import {
     getActiveItems,
     getList,
@@ -29,18 +30,19 @@ export function connectKeyboard(tgId: number) {
 
 export async function askToConnect(ctx: Context, tgId: number, reason: string): Promise<void> {
     await ctx.reply(
-        `${reason}\n\nПідключення займає пів хвилини — Сільпо покаже свою сторінку входу, ` +
+        `${reason}\n\nЦе займе <b>пів хвилини</b>. Сільпо покаже свою сторінку входу, ` +
         'а я отримаю доступ лише до каталогу, кошика й магазину, який ти вже обрав.',
         { parse_mode: 'HTML', ...connectKeyboard(tgId) }
     );
 }
 
-/** Renders the recognized list so the guest can see exactly what was read. */
+/** Shows exactly what was read, so a misread word is caught before the search. */
 export async function sendRecognizedList(ctx: Context, list: ListRecord): Promise<void> {
     const items = await getActiveItems(list.listId);
     if (!items.length) {
         await ctx.reply(
-            'Не змогла розібрати цей список 🤔\n\nНадішли фото чіткіше або напиши позиції текстом — по одній у рядку.',
+            '🤔 <b>Не знайшла тут жодного товару</b>\n\n' +
+            'Спробуй сфотографувати чіткіше або напиши позиції текстом — по одній у рядку.',
             { parse_mode: 'HTML' }
         );
         return;
@@ -52,11 +54,11 @@ export async function sendRecognizedList(ctx: Context, list: ListRecord): Promis
     const pending = items.filter(item => questionForItem(item) !== null).length;
     const lines = items.map(itemPreviewLine).join('\n');
     const footer = pending
-        ? `\n\nУточню ${pending === 1 ? 'одну' : pending} ${pluralizeDetails(pending)} — і одразу шукаю в Сільпо.`
-        : '\n\nШукаю ці товари в Сільпо…';
+        ? `\n\n👇 Уточню <b>${pending === 1 ? 'одну' : pending} ${pluralizeDetails(pending)}</b> — і біжу шукати.`
+        : '\n\n🔎 Шукаю ці товари в Сільпо…';
 
     await ctx.reply(
-        `📝 <b>Ось що я прочитала</b> — ${items.length} ${pluralizeItems(items.length)}:\n\n${lines}${footer}`,
+        `📝 <b>Прочитала твій список</b> — ${items.length} ${pluralizeItems(items.length)}\n\n${lines}${footer}`,
         { parse_mode: 'HTML' }
     );
 }
@@ -79,38 +81,83 @@ function questionKeyboard(question: PendingQuestion) {
     return Markup.inlineKeyboard(rows);
 }
 
+const PREFERENCE_LABELS: Record<SearchPreference, string> = {
+    cheap: '💸 Найдешевше',
+    promo: '🔥 За акцією',
+    familiar: '⭐ Те, що я вже брав',
+    premium: '👑 Найкраще',
+};
+
+export const PREFERENCE_CONFIRMATIONS: Record<SearchPreference, string> = {
+    cheap: '💸 Шукаю <b>найвигідніші</b> варіанти',
+    promo: '🔥 Шукаю те, що <b>зараз в акції</b>',
+    familiar: '⭐ Шукаю <b>звичне</b> — те, що ти вже брав',
+    premium: '👑 Шукаю <b>найкраще</b>, без економії',
+};
+
+function preferenceKeyboard(listId: string) {
+    return Markup.inlineKeyboard([
+        [
+            Markup.button.callback(PREFERENCE_LABELS.familiar, `pref:${listId}:familiar`),
+            Markup.button.callback(PREFERENCE_LABELS.cheap, `pref:${listId}:cheap`),
+        ],
+        [
+            Markup.button.callback(PREFERENCE_LABELS.promo, `pref:${listId}:promo`),
+            Markup.button.callback(PREFERENCE_LABELS.premium, `pref:${listId}:premium`),
+        ],
+    ]);
+}
+
+export function isKnownPreference(value: string): value is SearchPreference {
+    return (SEARCH_PREFERENCES as string[]).includes(value);
+}
+
 /**
- * Asks the next open question, or moves the list to the search step when
- * nothing is left to clarify.
+ * Asks the next open question, then the one list-level question, and only then
+ * searches. Asking what matters *before* searching is what keeps the first
+ * card relevant instead of arbitrary.
  */
 export async function advanceConversation(ctx: Context, tgId: number, listId: string): Promise<void> {
     const question = await nextQuestion(listId);
     if (question) {
-        const hint = question.kind === 'quantity'
-            ? '\n<i>Можна написати свою кількість — наприклад «2 кг».</i>'
-            : '';
         const message = await ctx.reply(
-            `❓ ${escapeHtml(question.question)}${hint}`,
+            `❓ <b>${escapeHtml(question.question)}</b>`,
             { parse_mode: 'HTML', ...questionKeyboard(question) }
         );
         await setChatMessageId(listId, message.message_id);
         return;
     }
-    await searchAndInvite(ctx, tgId, listId);
+
+    const list = await getList(listId);
+    if (list && !list.preference) {
+        await ctx.reply(
+            '🎯 <b>Що для тебе важливіше?</b>\n\n' +
+            'Під кожну позицію знайдеться десяток варіантів — підберу під твій смак.',
+            { parse_mode: 'HTML', ...preferenceKeyboard(listId) }
+        );
+        return;
+    }
+
+    await searchAndInvite(ctx, tgId, listId, list?.preference ?? 'familiar');
 }
 
 /** Runs the catalogue search and hands the guest over to the Mini App picker. */
-export async function searchAndInvite(ctx: Context, tgId: number, listId: string): Promise<void> {
-    const progress = await ctx.reply('🔎 Шукаю товари у твоєму магазині Сільпо…');
+export async function searchAndInvite(
+    ctx: Context,
+    tgId: number,
+    listId: string,
+    preference: SearchPreference
+): Promise<void> {
+    const progress = await ctx.reply('🔎 Шукаю у твоєму магазині Сільпо…');
     try {
-        const { context, found, missing } = await runSearch(tgId, listId);
+        const { context, found, missing } = await runSearch(tgId, listId, preference);
         await ctx.telegram.deleteMessage(progress.chat.id, progress.message_id).catch(() => undefined);
 
         if (!found.length) {
             await ctx.reply(
-                'На жаль, нічого зі списку не знайшлося у твоєму магазині 😞\n\n' +
-                `Магазин: <b>${escapeHtml(context.storeLabel)}</b>\n` +
-                'Спробуй змінити магазин або спосіб доставки в застосунку Сільпо й надішли список ще раз.',
+                '😞 <b>Нічого зі списку не знайшлося</b>\n\n' +
+                `Магазин: <b>${escapeHtml(context.storeLabel)}</b>\n\n` +
+                'Спробуй змінити магазин або спосіб доставки в застосунку Сільпо — і надішли список ще раз.',
                 { parse_mode: 'HTML' }
             );
             return;
@@ -122,22 +169,24 @@ export async function searchAndInvite(ctx: Context, tgId: number, listId: string
         }, 0);
 
         const lines = [
-            `✅ Знайшла <b>${found.length}</b> ${pluralizeItems(found.length)} у магазині <b>${escapeHtml(context.storeLabel)}</b>`,
+            `✅ <b>Знайшла ${found.length} ${pluralizeItems(found.length)}</b>`,
+            `📍 ${escapeHtml(context.storeLabel)}`,
             '',
             `💰 Орієнтовно: <b>${formatPrice(estimate)}</b>`,
         ];
         if (context.deliveryPrice !== null) {
-            const free = context.freeDeliveryFrom ? ` · безкоштовно від ${formatPrice(context.freeDeliveryFrom)}` : '';
+            const free = context.freeDeliveryFrom
+                ? ` · безкоштовно від <b>${formatPrice(context.freeDeliveryFrom)}</b>`
+                : '';
             lines.push(`🚚 Доставка: <b>${formatPrice(context.deliveryPrice)}</b>${free}`);
         }
         if (context.orderMinimum !== null) {
             lines.push(`📦 Мінімальне замовлення: <b>${formatPrice(context.orderMinimum)}</b>`);
         }
         if (missing.length) {
-            const names = missing.map(item => escapeHtml(item.query)).join(', ');
-            lines.push('', `⚠️ Не знайшла: ${names}`);
+            lines.push('', `⚠️ Не знайшла: <b>${missing.map(item => escapeHtml(item.query)).join(', ')}</b>`);
         }
-        lines.push('', 'Тепер обери конкретні товари — я підібрала варіанти з фото та цінами.');
+        lines.push('', '👇 Обери конкретні товари — я підібрала варіанти з фото та цінами.');
 
         await ctx.reply(lines.join('\n'), {
             parse_mode: 'HTML',
@@ -152,7 +201,7 @@ export async function searchAndInvite(ctx: Context, tgId: number, listId: string
             return;
         }
         console.error('[Conversation] Search failed:', error);
-        await ctx.reply('Сільпо зараз не відповідає 😞 Спробуй ще раз за хвилину — список я зберегла.');
+        await ctx.reply('😞 Сільпо зараз не відповідає. Спробуй за хвилину — список я зберегла.');
     }
 }
 
@@ -165,11 +214,10 @@ export async function resumePendingList(bot: Telegraf, tgId: number, listId: str
     const list = await getList(listId);
     if (!list || list.stage === 'done') return;
 
-    const chat = { chat: { id: tgId } };
     const proxy = {
         telegram: bot.telegram,
         reply: (text: string, extra?: any) => bot.telegram.sendMessage(tgId, text, extra),
-        ...chat,
+        chat: { id: tgId },
     } as unknown as Context;
 
     await advanceConversation(proxy, tgId, listId);

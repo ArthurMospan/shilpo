@@ -1,5 +1,6 @@
 import { callMCPTool, parseMcpContent } from './mcp';
 import type { StoreContext } from './store';
+import { dropIrrelevant, rankCandidates, type RankingContext } from './ranking';
 
 export interface ProductCandidate {
     productId: string;
@@ -226,22 +227,6 @@ function dedupe(products: ProductCandidate[]): ProductCandidate[] {
     });
 }
 
-/** Ranks candidates so the first card in the Mini App is the sane default. */
-function rankCandidates(products: ProductCandidate[], query: string): ProductCandidate[] {
-    const words = normalizeQueryKey(query).split(' ').filter(word => word.length > 2);
-    const score = (product: ProductCandidate): number => {
-        const title = normalizeQueryKey(product.title);
-        let value = 0;
-        if (product.inStock) value += 100;
-        value += words.filter(word => title.includes(word)).length * 12;
-        if (product.imageUrl) value += 8;
-        if (product.hasPromo) value += 6;
-        if (product.packaging) value += 3;
-        return value;
-    };
-    return [...products].sort((left, right) => score(right) - score(left));
-}
-
 export interface QueryResult {
     query: string;
     candidates: ProductCandidate[];
@@ -256,6 +241,7 @@ export async function findProductsForQueries(
     token: string,
     context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
     queries: string[],
+    ranking: RankingContext,
     limitPerQuery = 6,
     now = new Date()
 ): Promise<QueryResult[]> {
@@ -280,7 +266,10 @@ export async function findProductsForQueries(
         for (const query of batch) {
             const raw = grouped.get(query) || [];
             const normalized = dedupe(raw.map(normalizeProduct).filter(Boolean) as ProductCandidate[]);
-            results.set(query, rankCandidates(normalized, query).slice(0, limitPerQuery));
+            // Filter first, then rank: a preference must never promote a
+            // product that is not what the guest asked for.
+            const relevant = dropIrrelevant(normalized, query);
+            results.set(query, rankCandidates(relevant, query, ranking).slice(0, limitPerQuery));
         }
     }
 

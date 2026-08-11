@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import db from '../db/index';
 import type { ParsedItem } from '../ai/list-parser';
 import type { ProductCandidate } from '../silpo/products';
+import { isSearchPreference, type SearchPreference } from '../silpo/ranking';
 
 export type ListStage = 'clarifying' | 'searching' | 'picking' | 'done';
 
@@ -36,6 +37,8 @@ export interface ListRecord {
     storeLabel: string;
     questionIndex: number;
     chatMessageId: number | null;
+    /** How the guest wants candidates ordered; null until they choose. */
+    preference: SearchPreference | null;
 }
 
 function newId(): string {
@@ -64,6 +67,7 @@ function toListRecord(row: any): ListRecord {
         chatMessageId: row.chat_message_id === null || row.chat_message_id === undefined
             ? null
             : Number(row.chat_message_id),
+        preference: isSearchPreference(row.preference) ? row.preference : null,
     };
 }
 
@@ -190,6 +194,11 @@ export async function setStoreContext(
 export async function setQuestionIndex(listId: string, index: number): Promise<void> {
     await db.prepare('UPDATE lists SET question_index = ?, updated_at = CURRENT_TIMESTAMP WHERE list_id = ?')
         .run(index, listId);
+}
+
+export async function setPreference(listId: string, preference: SearchPreference): Promise<void> {
+    await db.prepare('UPDATE lists SET preference = ?, updated_at = CURRENT_TIMESTAMP WHERE list_id = ?')
+        .run(preference, listId);
 }
 
 export async function setChatMessageId(listId: string, messageId: number | null): Promise<void> {

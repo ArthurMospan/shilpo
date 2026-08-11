@@ -50,6 +50,7 @@ const schemaStatements = [
         store_label TEXT,
         question_index INTEGER DEFAULT 0,
         chat_message_id INTEGER,
+        preference TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(tg_id) REFERENCES users(tg_id) ON DELETE CASCADE
@@ -109,6 +110,7 @@ async function bootstrap(): Promise<void> {
         ['users', 'mcp_client_id', 'TEXT'],
         ['users', 'mcp_expires_at', 'INTEGER'],
         ['lists', 'chat_message_id', 'INTEGER'],
+        ['lists', 'preference', 'TEXT'],
     ] as const) {
         try {
             await runSchemaStatement(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);

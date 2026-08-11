@@ -6,6 +6,7 @@ import { buildAuthorizeUrl, completeAuthorization, isConnected, withSilpoToken, 
 import { getStoreContext } from '../silpo/store';
 import { addProductsToCart, clearCart, getCartSummary, SILPO_BASKET_URL } from '../silpo/cart';
 import { findProductsForQueries } from '../silpo/products';
+import { loadFamiliaritySafely } from '../silpo/familiarity';
 import {
     getActiveList,
     getItem,
@@ -238,9 +239,12 @@ export function createApp(bot: Telegraf) {
             return;
         }
         try {
+            const list = await getList(target.listId);
             const candidates = await withSilpoToken(tgId, async (token) => {
                 const context = await getStoreContext(token);
-                const [result] = await findProductsForQueries(token, context, [query], 12);
+                const familiarity = await loadFamiliaritySafely(tgId, token);
+                const ranking = { preference: list?.preference ?? 'familiar', familiarity };
+                const [result] = await findProductsForQueries(token, context, [query], ranking, 12);
                 return result?.candidates ?? [];
             });
             await setCandidates(target.itemId, candidates);
