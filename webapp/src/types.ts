@@ -6,10 +6,20 @@ export interface ProductCandidate {
     title: string;
     brand: string;
     imageUrl: string;
+    /** Price of one `saleUnit` — per piece, or per kilogram when sold by weight. */
     price: number;
     oldPrice: number;
     packaging: string;
-    priceUnit: string;
+    /** What one unit of quantity is: "шт", or "кг" for weighted goods. */
+    saleUnit: string;
+    weighted: boolean;
+    /** The least the store will sell, and the stepper's step, in `saleUnit`. */
+    minQuantity: number;
+    /** What Silpo prints on the shelf when that is not the sale-unit price; 0 when they agree. */
+    shelfPrice: number;
+    shelfOldPrice: number;
+    /** The amount `shelfPrice` refers to: "100 г". */
+    shelfUnit: string;
     inStock: boolean;
     hasPromo: boolean;
     promoLabel: string;
@@ -20,6 +30,7 @@ export interface ListItem {
     itemId: string;
     label: string;
     rawText: string;
+    /** In the chosen product's sale unit — pieces, or kilograms when sold by weight. */
     quantity: number;
     unit: string;
     selectedProductId: string;
@@ -77,6 +88,7 @@ export interface StoreOptions {
 }
 
 export interface CartInfo {
+    /** Products in the cart — counted, so goods sold by weight cannot make it fractional. */
     itemCount: number;
     total: number;
     isEmpty: boolean;

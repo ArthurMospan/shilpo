@@ -73,7 +73,6 @@ a { color: inherit; }
   transition: background .16s ease;
 }
 .store-chip:active { background: rgba(255, 255, 255, .3); }
-.store-chip.static { border-style: dashed; }
 .store-chip svg { flex: 0 0 auto; opacity: .85; }
 .store-chip span {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -141,6 +140,8 @@ a { color: inherit; }
 .candidate-price { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; }
 .candidate-price b { font-size: 13px; letter-spacing: -.02em; }
 .candidate-price del { color: #9a9a92; font-size: 9px; }
+/* Which amount the price is for — "/100 г" on anything cut to order. */
+.candidate-price i { margin-left: -2px; color: #8d8d85; font-size: 9px; font-style: normal; font-weight: 700; }
 .candidate-pack { color: #8d8d85; font-size: 9px; }
 .candidate-flag {
   position: absolute; top: 6px; left: 6px;
@@ -167,6 +168,9 @@ a { color: inherit; }
 .stepper span { min-width: 40px; font-size: 13px; font-weight: 800; text-align: center; }
 .line-total { font-size: 15px; font-weight: 800; letter-spacing: -.03em; }
 .line-total small { display: block; color: #96968e; font-size: 9px; font-weight: 650; text-align: right; }
+
+/* Why the stepper jumps in 800-gram steps rather than ones. */
+.item-note { margin: 7px 2px 0; color: #8d8d85; font-size: 10px; line-height: 1.4; }
 
 .more-button {
   display: flex; width: 100%; align-items: center; justify-content: center; gap: 6px;
@@ -315,6 +319,7 @@ a { color: inherit; }
 .search-result-copy span { color: #8d8d85; font-size: 10px; }
 .search-result-copy b { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
 .search-result-copy b del { color: #a5a59d; font-size: 10px; font-weight: 600; }
+.search-result-copy b i { margin-left: -4px; color: #8d8d85; font-size: 10px; font-style: normal; font-weight: 700; }
 
 /* ── Store picker ───────────────────────────────────────── */
 .store-scroll { display: flex; flex: 1; flex-direction: column; gap: 16px; overflow-y: auto; overscroll-behavior: contain; }

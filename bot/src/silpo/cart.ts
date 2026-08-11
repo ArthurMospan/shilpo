@@ -16,6 +16,13 @@ export interface CartLine {
 export interface CartSummary {
     shoppingCartId: string;
     lines: CartLine[];
+    /**
+     * How many products are in the cart — lines, not quantities.
+     *
+     * Adding quantities up read "У кошику вже 3.8" the moment anything sold by
+     * weight was in there: three bottles and 800 г of bread really do sum to
+     * 3.8, and no wording rescues that number. A cart holds four products.
+     */
     itemCount: number;
     total: number;
     isEmpty: boolean;
@@ -24,6 +31,13 @@ export interface CartSummary {
 function numberOf(value: unknown): number {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/** Silpo's own steps go down to 0,05 кг, so three decimals is the whole range. */
+function cartQuantity(value: unknown): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return 1;
+    return Math.round(parsed * 1000) / 1000;
 }
 
 function textOf(source: any, keys: string[]): string {
@@ -68,7 +82,7 @@ export async function getCartSummary(token: string, shoppingCartId: string): Pro
     return {
         shoppingCartId,
         lines,
-        itemCount: lines.reduce((sum, line) => sum + line.quantity, 0),
+        itemCount: lines.length,
         total: calculatedTotal,
         isEmpty: lines.length === 0,
     };
@@ -77,6 +91,7 @@ export async function getCartSummary(token: string, shoppingCartId: string): Pro
 export interface CartAddition {
     productId: string;
     companyId: string;
+    /** In the product's own sale unit — pieces, or kilograms for weighted goods. */
     quantity: number;
 }
 
@@ -92,7 +107,10 @@ export async function addProductsToCart(
             productId: String(addition.productId),
             companyId: String(addition.companyId),
             branchId: String(branchId),
-            quantity: Math.max(1, Math.round(Number(addition.quantity) || 1)),
+            // Never rounded to a whole number: goods sold by weight arrive here
+            // as kilograms, and rounding 0,3 кг of cheese up to 1 would order
+            // three times what the guest chose and charge them for it.
+            quantity: cartQuantity(addition.quantity),
             // The guest asked to add these on top of whatever is already there;
             // replacement is handled by clearing the cart first, never by
             // silently overwriting a line's quantity.

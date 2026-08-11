@@ -4,7 +4,7 @@ import { buildSelection } from './selection';
 import type { ListItemRecord } from './repository';
 import type { ProductCandidate } from '../silpo/products';
 
-function candidate(productId: string, price: number): ProductCandidate {
+function candidate(productId: string, price: number, overrides: Partial<ProductCandidate> = {}): ProductCandidate {
     return {
         productId,
         externalProductId: 1,
@@ -16,12 +16,23 @@ function candidate(productId: string, price: number): ProductCandidate {
         price,
         oldPrice: 0,
         packaging: '',
-        priceUnit: '',
+        saleUnit: 'шт',
+        weighted: false,
+        minQuantity: 1,
+        shelfPrice: 0,
+        shelfOldPrice: 0,
+        shelfUnit: '',
         inStock: true,
         hasPromo: false,
         promoLabel: '',
         url: '',
+        ...overrides,
     };
+}
+
+/** Bread priced per kilogram that only leaves the shelf in whole loaves. */
+function weighed(productId: string, pricePerKg: number, step: number): ProductCandidate {
+    return candidate(productId, pricePerKg, { saleUnit: 'кг', weighted: true, minQuantity: step });
 }
 
 function item(overrides: Partial<ListItemRecord>): ListItemRecord {
@@ -37,6 +48,7 @@ function item(overrides: Partial<ListItemRecord>): ListItemRecord {
         needsQuantity: false,
         clarification: null,
         candidates: [],
+        candidatesTotal: 0,
         selectedProductId: '',
         dropped: false,
         ...overrides,
@@ -50,8 +62,61 @@ test('the total multiplies each chosen product by its quantity', () => {
     ]);
 
     assert.equal(selection.chosen.length, 2);
-    assert.equal(selection.productCount, 3);
+    assert.equal(selection.productCount, 2, 'two products, whatever their quantities');
     assert.equal(selection.total.toFixed(2), '111.30');
+});
+
+test('goods sold by weight are costed per kilogram, not per piece', () => {
+    const selection = buildSelection([
+        item({
+            itemId: 'a',
+            candidates: [weighed('bread', 124.74, 0.8)],
+            selectedProductId: 'bread',
+            quantity: 0.8,
+            unit: 'кг',
+        }),
+    ]);
+
+    assert.equal(selection.lines[0].quantity, 0.8);
+    assert.equal(selection.lines[0].unit, 'кг');
+    assert.equal(selection.total.toFixed(2), '99.79');
+});
+
+test('an amount under the minimum is raised to it rather than sold short', () => {
+    const selection = buildSelection([
+        item({
+            itemId: 'a',
+            candidates: [weighed('bread', 124.74, 0.8)],
+            selectedProductId: 'bread',
+            quantity: 0.3,
+            unit: 'кг',
+        }),
+    ]);
+
+    assert.equal(selection.lines[0].quantity, 0.8, 'Silpo will not cut less than one loaf');
+});
+
+test('an amount between two steps rounds up to a buyable one', () => {
+    const selection = buildSelection([
+        item({
+            itemId: 'a',
+            candidates: [weighed('cheese', 599, 0.25)],
+            selectedProductId: 'cheese',
+            quantity: 0.6,
+            unit: 'кг',
+        }),
+    ]);
+
+    assert.equal(selection.lines[0].quantity, 0.75, 'three quarter-kilo portions, not two and a half');
+});
+
+test('a weighted product counts as one product, not as its weight', () => {
+    const selection = buildSelection([
+        item({ itemId: 'a', candidates: [weighed('bread', 124.74, 0.8)], selectedProductId: 'bread', quantity: 0.8, unit: 'кг' }),
+        item({ itemId: 'b', candidates: [candidate('milk', 41.9)], selectedProductId: 'milk', quantity: 3 }),
+    ]);
+
+    assert.equal(selection.productCount, 2, 'never 3.8');
 });
 
 test('dropped lines never reach the cart', () => {

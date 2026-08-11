@@ -13,7 +13,12 @@ function product(overrides: Partial<ProductCandidate> & { title: string; price: 
         imageUrl: 'https://cdn/img.png',
         oldPrice: 0,
         packaging: '1 л',
-        priceUnit: '',
+        saleUnit: 'шт',
+        weighted: false,
+        minQuantity: 1,
+        shelfPrice: 0,
+        shelfOldPrice: 0,
+        shelfUnit: '',
         inStock: true,
         hasPromo: false,
         promoLabel: '',
@@ -134,4 +139,49 @@ test('relevance outranks the preference — a cheap wrong product stays behind',
         product({ title: 'Молоко Яготинське 2,5% 900 г', price: 55 }),
     ], 'молоко', context({ preference: 'cheap' }));
     assert.equal(ranked[0].title, 'Молоко Яготинське 2,5% 900 г');
+});
+
+test('a cheap thing made of milk does not lead the line for milk', () => {
+    // Both titles match "молоко" on every word, so word-share alone rates them
+    // equally and the price preference hands the line to the coffee sachet.
+    // Silpo names the kind first, and that is what separates them.
+    const ranked = rankCandidates([
+        product({ title: 'Напій кавовий MacCoffee 3 в 1 згущене молоко', price: 5.99 }),
+        product({ title: 'Молоко пастеризоване Повна Чаша питне 2,6%', price: 21.49 }),
+    ], 'молоко', context({ preference: 'cheap' }));
+    assert.equal(ranked[0].title, 'Молоко пастеризоване Повна Чаша питне 2,6%');
+});
+
+test('a mayonnaise made with eggs does not lead the line for eggs', () => {
+    const ranked = rankCandidates([
+        product({ title: 'Майонез «Королівський смак» на перепелиних яйцях', price: 38.99 }),
+        product({ title: 'Яйця курячі «Повна Чаша»® 1 кат.', price: 52.79 }),
+    ], 'яйця', context({ preference: 'cheap' }));
+    assert.equal(ranked[0].title, 'Яйця курячі «Повна Чаша»® 1 кат.');
+});
+
+test('nothing is promoted when no title leads with the kind', () => {
+    // Buckwheat is shelved as "Крупа … гречана", so this must stay a plain
+    // cheapest-first ordering rather than promoting an arbitrary title.
+    const ranked = rankCandidates([
+        product({ title: 'Крупа Повна Чаша гречана ядриця', price: 65.99 }),
+        product({ title: 'Крупа гречана «Премія»®', price: 49.99 }),
+    ], 'гречка', context({ preference: 'cheap' }));
+    assert.equal(ranked[0].price, 49.99);
+});
+
+test('goods sold by weight are compared by the least of them that can be bought', () => {
+    // 124,74 ₴ a kilogram is not dearer than a 34,99 ₴ loaf: the smallest
+    // purchase is 100 г of it, which costs 12,47 ₴.
+    const ranked = rankCandidates([
+        product({ title: 'Хліб «Кулиничі» «Ризький» нарізаний', price: 34.99 }),
+        product({
+            title: 'Хліб подовий гречаний',
+            price: 124.74,
+            weighted: true,
+            saleUnit: 'кг',
+            minQuantity: 0.1,
+        }),
+    ], 'хліб', context({ preference: 'cheap' }));
+    assert.equal(ranked[0].title, 'Хліб подовий гречаний');
 });

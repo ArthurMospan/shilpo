@@ -2,6 +2,7 @@ import { withSilpoToken } from '../silpo/auth';
 import { getStoreContext, type StoreContext } from '../silpo/store';
 import { getStorePreference } from '../silpo/store-preference';
 import { findProductsForQueries } from '../silpo/products';
+import { quantityFor, unitOf } from '../silpo/quantity';
 import { loadFamiliaritySafely } from '../silpo/familiarity';
 import type { SearchPreference } from '../silpo/ranking';
 import { buildSelection, type Selection, type SelectionLine } from './selection';
@@ -12,6 +13,7 @@ import {
     setStage,
     setStoreContext,
     selectProduct,
+    updateItem,
     type Clarification,
     type ListItemRecord,
 } from './repository';
@@ -84,12 +86,19 @@ export async function runSearch(
         for (const [index, item] of items.entries()) {
             const candidates = results[index]?.candidates ?? [];
             await setCandidates(item.itemId, candidates, results[index]?.total ?? candidates.length);
-            if (candidates.length) {
-                await selectProduct(item.itemId, candidates[0].productId);
-                found.push({ ...item, candidates, selectedProductId: candidates[0].productId });
-            } else {
+            if (!candidates.length) {
                 missing.push(item);
+                continue;
             }
+            // From here on the line's amount is counted in the chosen product's
+            // own unit — "хліб" against a loaf cut to order stops meaning one
+            // piece and starts meaning the weight Silpo will actually sell.
+            const product = candidates[0];
+            const quantity = quantityFor(product, item);
+            const unit = unitOf(product);
+            await selectProduct(item.itemId, product.productId);
+            await updateItem(item.itemId, { quantity, unit });
+            found.push({ ...item, candidates, quantity, unit, selectedProductId: product.productId });
         }
 
         await setStage(listId, 'picking');

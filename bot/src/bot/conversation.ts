@@ -2,6 +2,7 @@ import { Markup, type Telegraf } from 'telegraf';
 import type { Context } from 'telegraf';
 import { SilpoNotConnectedError } from '../silpo/auth';
 import { formatPrice } from '../silpo/products';
+import { lineCost } from '../silpo/quantity';
 import { SEARCH_PREFERENCES, type SearchPreference } from '../silpo/ranking';
 import {
     getActiveItems,
@@ -197,12 +198,13 @@ export async function searchAndInvite(
         // "Приблизно" was a guess dressed up as a number — it added up whichever
         // product happened to rank first. The cheapest option per line is a
         // floor the total genuinely cannot go under, so "від" is the truth.
+        //
+        // Each candidate is costed in its own unit before they are compared: a
+        // price per kilogram and a price per package are not two numbers on one
+        // scale, and picking the smaller of them would be picking at random.
         const floor = found.reduce((sum, item) => {
-            const cheapest = item.candidates.reduce(
-                (best, candidate) => (best === null || candidate.price < best ? candidate.price : best),
-                null as number | null
-            );
-            return sum + (cheapest ?? 0) * (Number(item.quantity) || 1);
+            const costs = item.candidates.map(candidate => lineCost(candidate, item));
+            return sum + (costs.length ? Math.min(...costs) : 0);
         }, 0);
 
         const lines = [

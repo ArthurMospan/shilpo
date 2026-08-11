@@ -1,5 +1,6 @@
 import { callMCPTool, parseMcpContent } from './mcp';
 import { mapWithConcurrency, searchCatalogAll } from './catalog';
+import { formatAmount, normalizedUnit, startingPrice } from './quantity';
 import type { StoreContext } from './store';
 import { dropIrrelevant, rankCandidates, type RankingContext } from './ranking';
 
@@ -14,14 +15,29 @@ export interface ProductCandidate {
     title: string;
     brand: string;
     imageUrl: string;
-    /** Price the guest actually pays for one unit, promo included. */
+    /**
+     * Price of one `saleUnit`, promo included — per piece, or per kilogram for
+     * weighted goods. Every sum, total and comparison uses this one.
+     */
     price: number;
-    /** Crossed-out reference price, or 0 when there is no discount. */
+    /** Crossed-out reference price on the same scale, or 0 when there is no discount. */
     oldPrice: number;
-    /** Packaging as Silpo shows it: "900 г", "2 × 0,5 л", "1 кг". */
+    /** Packaging as Silpo shows it: "900 г", "2 × 0,5 л". Empty for weighted goods. */
     packaging: string;
-    /** Unit the price refers to for weighted goods: "кг", "100 г". */
-    priceUnit: string;
+    /** What one unit of quantity is: "шт", or "кг" when sold by weight. */
+    saleUnit: string;
+    /** True when Silpo sells this by weight, so quantity is a weight and not a count. */
+    weighted: boolean;
+    /**
+     * The least of it the guest can buy, and the step above that — bread priced
+     * per 100 г that only leaves the shelf in 0,8 кг loaves has 0.8 here.
+     */
+    minQuantity: number;
+    /** Price as Silpo prints it on the shelf when that is not the sale-unit price; 0 when they agree. */
+    shelfPrice: number;
+    shelfOldPrice: number;
+    /** The amount `shelfPrice` refers to: "100 г". */
+    shelfUnit: string;
     inStock: boolean;
     hasPromo: boolean;
     /** Multi-buy offers such as "3 за ціною 2". */
@@ -72,16 +88,6 @@ function imageOf(product: any): string {
     return '';
 }
 
-function normalizedUnit(value: unknown): string {
-    const normalized = textOf(value).toLowerCase().replace(/[.\s_-]+/g, '');
-    if (/^(kg|kilogram|кілограм|кг)$/.test(normalized)) return 'кг';
-    if (/^(g|gr|gram|грам|г)$/.test(normalized)) return 'г';
-    if (/^(l|liter|litre|літр|л)$/.test(normalized)) return 'л';
-    if (/^(ml|milliliter|мілілітр|мл)$/.test(normalized)) return 'мл';
-    if (/^(pcs|pc|piece|шт|штука|од)$/.test(normalized)) return 'шт';
-    return '';
-}
-
 /** Pulls "900 г" or "2 × 0,5 л" out of a product title or a metadata field. */
 function measurementFromText(value: unknown): string {
     const text = textOf(value);
@@ -99,9 +105,16 @@ function measurementFromText(value: unknown): string {
     return '';
 }
 
-function packagingOf(product: any): string {
+/**
+ * Weighted goods have no packaging, and saying they do is a lie the guest pays
+ * for: Silpo's `displayRatio` on a loaf sold by weight reads "100г", which as a
+ * pack size announces a 100-gram loaf. What it really describes is the shelf
+ * label's denominator, and that travels as `shelfUnit` instead.
+ */
+function packagingOf(product: any, weighted: boolean): string {
     const fromTitle = measurementFromText(product?.title ?? product?.name);
     if (fromTitle) return fromTitle;
+    if (weighted) return '';
     const fromDisplayRatio = measurementFromText(product?.displayRatio ?? product?.display_ratio);
     if (fromDisplayRatio) return fromDisplayRatio;
     for (const key of ['packageSize', 'weightText', 'volumeText', 'netWeightText', 'displayWeight']) {
@@ -112,19 +125,46 @@ function packagingOf(product: any): string {
     return ratio ? `1 ${ratio}` : '';
 }
 
-/** Silpo encodes multi-buy deals in `specialPrices`; only single-unit offers change the shelf price. */
-function bestSpecialPrice(product: any, basePrice: number): { price: number; label: string } {
+interface OfferTerms {
+    /** The least of this product that can be bought, in `saleUnit`. */
+    minQuantity: number;
+    saleUnit: string;
+    /** How many sale units the shelf label's price covers — 10 for ₴/100 г against ₴/кг. */
+    labelScale: number;
+    /** The label's own denominator, so a conditional price is quoted the way the shelf quotes it. */
+    shelfUnit: string;
+}
+
+/**
+ * What `specialPrices` actually promises, which is less than it looks.
+ *
+ * Every one of these carries a `count`, and `type: "from"` means *from* that
+ * much — buy two of the salami and each is 209 ₴, buy one and it is 274 ₴.
+ * Treating "from" as an immediate discount, as this did, quoted the bulk price
+ * to a guest buying a single pack, and across the branch not one packaged
+ * product had an offer that started at a single unit. So a threshold only
+ * changes the price when the smallest purchase already meets it; otherwise it is
+ * something to *say*, not something to charge.
+ *
+ * On weighted goods the offer is quoted on the shelf label's scale — 46,90 ₴ per
+ * 100 г against a product priced 529 ₴ per кг — so it is scaled onto the sale
+ * unit before it is compared to anything. Without that it reads as 46,90 ₴ a
+ * kilogram and sausage becomes the cheapest thing in the shop.
+ */
+function bestSpecialPrice(product: any, basePrice: number, terms: OfferTerms): { price: number; label: string } {
     const offers = Array.isArray(product?.specialPrices) ? product.specialPrices : [];
     let immediate = 0;
     let label = '';
     for (const offer of offers) {
-        const price = numberOf(offer?.price);
-        const count = numberOf(offer?.count) || 1;
-        if (!price || price >= basePrice) continue;
-        if (count <= 1 || String(offer?.type || '') === 'from') {
-            if (!immediate || price < immediate) immediate = price;
+        const quoted = numberOf(offer?.price);
+        const offered = quoted * terms.labelScale;
+        const from = numberOf(offer?.count) || terms.minQuantity;
+        if (!offered || offered >= basePrice) continue;
+        if (from <= terms.minQuantity) {
+            if (!immediate || offered < immediate) immediate = offered;
         } else if (!label) {
-            label = `${count} шт по ${formatPrice(price)}`;
+            const price = terms.shelfUnit ? `${formatPrice(quoted)}/${terms.shelfUnit}` : formatPrice(offered);
+            label = `від ${formatAmount(from, terms.saleUnit)} — ${price}`;
         }
     }
     return { price: immediate, label };
@@ -147,6 +187,21 @@ function isAvailable(product: any): boolean {
     return true;
 }
 
+/**
+ * Whether quantity for this product is a weight rather than a count.
+ *
+ * Only an explicit flag counts. A "кг" unit alone is not enough — the MCP
+ * fallback describes bananas priced per kilogram without ever saying they are
+ * cut to order, and guessing "weighted" there would turn a count the guest
+ * typed into kilograms behind their back.
+ */
+function isWeighted(raw: any): boolean {
+    for (const key of ['weighted', 'isWeighted', 'byWeight', 'is_weighted']) {
+        if (typeof raw?.[key] === 'boolean') return raw[key];
+    }
+    return false;
+}
+
 export function normalizeProduct(raw: any): ProductCandidate | null {
     const productId = firstText(raw, ['id', 'productId', 'product_id']);
     const slug = firstText(raw, ['slug', 'productSlug', 'product_slug']);
@@ -154,7 +209,26 @@ export function normalizeProduct(raw: any): ProductCandidate | null {
     if (!productId || !title) return null;
 
     const basePrice = numberOf(raw?.price ?? raw?.currentPrice ?? raw?.salePrice);
-    const special = bestSpecialPrice(raw, basePrice);
+    const weighted = isWeighted(raw);
+    const saleUnit = normalizedUnit(raw?.ratio ?? raw?.priceRatio) || (weighted ? 'кг' : 'шт');
+    // Silpo's own step is the minimum: the first tap of "+" on silpo.ua puts
+    // exactly this much in the basket, and nothing smaller can be ordered.
+    const step = numberOf(raw?.addToBasketStep ?? raw?.add_to_basket_step ?? raw?.minQuantity);
+    const minQuantity = step || (weighted ? 0.1 : 1);
+
+    // How the shelf label relates to the sale unit. A label equal to the price
+    // is no second price at all, which is the case for everything packaged.
+    const labelPrice = numberOf(raw?.shelfPrice);
+    const labelScale = labelPrice && labelPrice !== basePrice && basePrice > 0 ? basePrice / labelPrice : 0;
+    // "100г" as Silpo writes it, spaced the way Ukrainian reads it.
+    const shelfUnit = labelScale ? (measurementFromText(raw?.shelfUnit) || textOf(raw?.shelfUnit)) : '';
+
+    const special = bestSpecialPrice(raw, basePrice, {
+        minQuantity,
+        saleUnit,
+        labelScale: labelScale || 1,
+        shelfUnit,
+    });
     const price = special.price || basePrice;
     // Nothing priceless is buyable, and under "найдешевше" a zero would outrank
     // every real product. Whatever this object is, it is not an offer.
@@ -162,6 +236,10 @@ export function normalizeProduct(raw: any): ProductCandidate | null {
     const listedOld = numberOf(raw?.oldPrice ?? raw?.old_price ?? raw?.originalPrice);
     const oldPrice = listedOld > price ? listedOld : (special.price ? basePrice : 0);
     const externalId = Number(raw?.externalProductId ?? raw?.external_product_id);
+    // Derived rather than read, so a promo shows up in the label too instead of
+    // the card claiming one price and its unit line another.
+    const onLabel = (value: number): number =>
+        labelScale ? Math.round((value / labelScale) * 100) / 100 : 0;
 
     return {
         productId,
@@ -173,8 +251,13 @@ export function normalizeProduct(raw: any): ProductCandidate | null {
         imageUrl: imageOf(raw),
         price,
         oldPrice,
-        packaging: packagingOf(raw),
-        priceUnit: normalizedUnit(raw?.ratio ?? raw?.priceRatio),
+        packaging: packagingOf(raw, weighted),
+        saleUnit,
+        weighted,
+        minQuantity,
+        shelfPrice: onLabel(price),
+        shelfOldPrice: onLabel(oldPrice),
+        shelfUnit,
         inStock: isAvailable(raw),
         hasPromo: Boolean(special.price) || oldPrice > price || Boolean(raw?.hasPromo ?? raw?.isPromo),
         promoLabel: special.label,
@@ -277,27 +360,26 @@ export interface QueryResult {
 }
 
 /**
- * How wide a net to cast before ranking. Ranking cannot pick the cheapest
- * product on a shelf it never saw, and most queries return fewer than this
- * anyway, so in practice the whole shelf gets considered.
+ * Runs one line against the full store catalogue and keeps the best of it.
+ *
+ * The pool is the whole shelf, not a prefix of it: ranking cannot pick the
+ * cheapest product on a shelf it never saw, and the strip and «Усі варіанти»
+ * have to be slices of the same shelf or they contradict each other.
  */
-const RANKING_POOL = 200;
-
-/** Runs one line against the full store catalogue and keeps the best of it. */
 async function resolveFromCatalog(
     context: Pick<StoreContext, 'branchId' | 'deliveryType'>,
     query: string,
     ranking: RankingContext,
     limitPerQuery: number
 ): Promise<QueryResult> {
-    const page = await searchCatalogAll(context, query, RANKING_POOL);
+    const page = await searchCatalogAll(context, query);
     const normalized = dedupe(page.items);
     const relevant = dropIrrelevant(normalized, query);
     const ranked = rankCandidates(relevant, query, ranking).slice(0, limitPerQuery);
     console.log(
         `[Search] "${query}" store=${page.total} fetched=${normalized.length} `
         + `relevant=${relevant.length} shown=${ranked.length}`
-        + (ranked.length ? ` cheapest=${formatPrice(Math.min(...ranked.map(item => item.price)))}` : '')
+        + (relevant.length ? ` cheapest=${formatPrice(Math.min(...relevant.map(startingPrice)))}` : '')
     );
     return { query, candidates: ranked, total: relevant.length };
 }
@@ -340,12 +422,16 @@ export async function loadShelf(
     const inStockFirst = (left: ProductCandidate, right: ProductCandidate): number =>
         Number(right.inStock) - Number(left.inStock);
 
+    // Cheapest means "costs me least", which for goods cut to order is one
+    // minimum portion rather than a kilogram nobody is buying.
     if (sort === 'cheap') {
-        return [...items].sort((left, right) => inStockFirst(left, right) || left.price - right.price);
+        return [...items].sort((left, right) =>
+            inStockFirst(left, right) || startingPrice(left) - startingPrice(right));
     }
     if (sort === 'promo') {
-        return [...items].sort((left, right) =>
-            inStockFirst(left, right) || discountOf(right) - discountOf(left) || left.price - right.price);
+        return [...items].sort((left, right) => inStockFirst(left, right)
+            || discountOf(right) - discountOf(left)
+            || startingPrice(left) - startingPrice(right));
     }
     return rankCandidates(items, query, ranking);
 }

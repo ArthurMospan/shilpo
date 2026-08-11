@@ -4,6 +4,7 @@ import {
     RotateCcw, Search, ShoppingCart, Sparkles, Store, Trash2, Truck, X,
 } from 'lucide-react';
 import * as api from './api';
+import { formatAmount, maxQuantity, requantify, stepOf, unitOf } from './quantity';
 import { closeApp, haptic, initTelegram, openExternal } from './telegram';
 import type {
     HomeResponse, ListItem, ListResponse, ProductCandidate, ShelfSort,
@@ -86,6 +87,9 @@ export default function App() {
 
     const active = useMemo(() => items.filter(item => !item.dropped), [items]);
 
+    // Products are counted, never summed: adding quantities up turns three
+    // bottles and 800 г of bread into "3.8 товари", which is not a number of
+    // anything. Money is the total; the count is how many things it buys.
     const totals = useMemo(() => {
         let total = 0;
         let productCount = 0;
@@ -97,7 +101,7 @@ export default function App() {
                 continue;
             }
             total += product.price * item.quantity;
-            productCount += item.quantity;
+            productCount += 1;
         }
         return { total, productCount, missing };
     }, [active]);
@@ -106,15 +110,26 @@ export default function App() {
         setItems(current => current.map(item => (item.itemId === itemId ? { ...item, ...patch } : item)));
     }, []);
 
+    /**
+     * Swapping products can change what the amount counts — two packs of bread
+     * are not two kilograms of a loaf cut to order, and a product with a 0,8 кг
+     * minimum has to start there. The server applies the same rule; this keeps
+     * the screen from showing something else in the meantime.
+     */
     const onSelect = useCallback((item: UiItem, product: ProductCandidate) => {
         if (item.selectedProductId === product.productId) return;
         haptic('select');
-        patchItem(item.itemId, { selectedProductId: product.productId });
+        patchItem(item.itemId, {
+            selectedProductId: product.productId,
+            quantity: requantify(product, item.quantity, item.unit),
+            unit: unitOf(product),
+        });
         api.selectProduct(listId, item.itemId, product.productId).catch(() => flash('Не вдалося зберегти вибір'));
     }, [flash, listId, patchItem]);
 
-    const onQuantity = useCallback((item: UiItem, quantity: number) => {
-        const next = Math.max(1, Math.min(99, quantity));
+    const onQuantity = useCallback((item: UiItem, product: ProductCandidate | null, quantity: number) => {
+        const step = stepOf(product);
+        const next = Math.max(step, Math.min(maxQuantity(product), Math.round(quantity * 1000) / 1000));
         if (next === item.quantity) return;
         haptic('tap');
         patchItem(item.itemId, { quantity: next });
@@ -286,7 +301,10 @@ export default function App() {
                                 </div>
                             )}
                             {!data.cart.isEmpty && (
-                                <div>У кошику вже <b>{data.cart.itemCount}</b> · {money(data.cart.total)}</div>
+                                <div>
+                                    У кошику Сільпо вже <b>{data.cart.itemCount}</b>{' '}
+                                    {pluralize(data.cart.itemCount, 'товар', 'товари', 'товарів')} на {money(data.cart.total)}
+                                </div>
                             )}
                         </div>
                     </div>
@@ -327,9 +345,20 @@ export default function App() {
                     item={alternativesFor}
                     onClose={() => setAlternativesFor(null)}
                     onPicked={(candidates, product) => {
-                        patchItem(alternativesFor.itemId, { candidates, selectedProductId: product.productId });
+                        const item = alternativesFor;
                         setAlternativesFor(null);
                         haptic('select');
+                        patchItem(item.itemId, {
+                            candidates,
+                            selectedProductId: product.productId,
+                            quantity: requantify(product, item.quantity, item.unit),
+                            unit: unitOf(product),
+                        });
+                        // The strip the sheet just replaced no longer holds the old
+                        // choice, so leaving this on the screen alone would drop the
+                        // line out of the cart without ever saying so.
+                        api.selectProduct(listId, item.itemId, product.productId)
+                            .catch(() => flash('Не вдалося зберегти вибір'));
                     }}
                 />
             )}
@@ -433,7 +462,7 @@ function HomeScreen({ home, onOpenList, onNewList }: {
 interface ItemCardProps {
     item: UiItem;
     onSelect(item: UiItem, product: ProductCandidate): void;
-    onQuantity(item: UiItem, quantity: number): void;
+    onQuantity(item: UiItem, product: ProductCandidate | null, quantity: number): void;
     onToggleDropped(item: UiItem): void;
     onOpenAlternatives(): void;
 }
@@ -441,6 +470,8 @@ interface ItemCardProps {
 function ItemCard({ item, onSelect, onQuantity, onToggleDropped, onOpenAlternatives }: ItemCardProps) {
     const selected = item.candidates.find(candidate => candidate.productId === item.selectedProductId) || null;
     const lineTotal = selected ? selected.price * item.quantity : 0;
+    const step = stepOf(selected);
+    const unit = selected ? unitOf(selected) : (item.unit || 'шт');
 
     return (
         <section className={`item-card${item.dropped ? ' dropped' : ''}`}>
@@ -485,19 +516,34 @@ function ItemCard({ item, onSelect, onQuantity, onToggleDropped, onOpenAlternati
 
                     <div className="item-footer">
                         <div className="stepper">
-                            <button onClick={() => onQuantity(item, item.quantity - 1)} disabled={item.quantity <= 1} aria-label="Менше">
+                            <button
+                                onClick={() => onQuantity(item, selected, item.quantity - step)}
+                                disabled={item.quantity <= step}
+                                aria-label="Менше"
+                            >
                                 <Minus size={15} />
                             </button>
-                            <span>{item.quantity} {item.unit || 'шт'}</span>
-                            <button onClick={() => onQuantity(item, item.quantity + 1)} disabled={item.quantity >= 99} aria-label="Більше">
+                            <span>{formatAmount(item.quantity, unit)}</span>
+                            <button
+                                onClick={() => onQuantity(item, selected, item.quantity + step)}
+                                disabled={item.quantity >= maxQuantity(selected)}
+                                aria-label="Більше"
+                            >
                                 <Plus size={15} />
                             </button>
                         </div>
                         <div className="line-total">
                             {money(lineTotal)}
-                            {selected && item.quantity > 1 && <small>{money(selected.price)} × {item.quantity}</small>}
+                            {selected && item.quantity !== 1 && (
+                                <small>{money(selected.price)} за {unit}</small>
+                            )}
                         </div>
                     </div>
+                    {selected?.weighted && (
+                        <p className="item-note">
+                            Ріжуть на вагу: щонайменше {formatAmount(step, unit)}, далі кроком по {formatAmount(step, unit)}
+                        </p>
+                    )}
 
                     <button className="more-button" onClick={onOpenAlternatives}>
                         <Layers size={14} /> Усі варіанти{item.total > item.candidates.length ? ` · ${item.total}` : ''}
@@ -508,6 +554,26 @@ function ItemCard({ item, onSelect, onQuantity, onToggleDropped, onOpenAlternati
     );
 }
 
+/**
+ * The price as Silpo prints it, and what it is a price of.
+ *
+ * Weighted goods carry two numbers: the kilogram price everything is summed
+ * from, and the shelf label the guest sees on silpo.ua — 124,74 ₴/кг shown as
+ * 12,47 ₴/100 г. Showing the kilogram price where the site shows the label
+ * makes us look wrong about the price of bread, so the label leads and the unit
+ * is spelled out beside it.
+ */
+function shelfLabel(candidate: ProductCandidate): { price: number; oldPrice: number; per: string } {
+    if (!candidate.shelfPrice) {
+        return { price: candidate.price, oldPrice: candidate.oldPrice, per: '' };
+    }
+    return {
+        price: candidate.shelfPrice,
+        oldPrice: candidate.shelfOldPrice,
+        per: candidate.shelfUnit || unitOf(candidate),
+    };
+}
+
 function CandidateCard({ candidate, selected, onSelect }: {
     candidate: ProductCandidate;
     selected: boolean;
@@ -516,6 +582,10 @@ function CandidateCard({ candidate, selected, onSelect }: {
     const discount = candidate.oldPrice > candidate.price
         ? Math.round((1 - candidate.price / candidate.oldPrice) * 100)
         : 0;
+    const label = shelfLabel(candidate);
+    const note = candidate.weighted
+        ? `мін. ${formatAmount(stepOf(candidate), unitOf(candidate))}`
+        : candidate.packaging;
 
     return (
         <button
@@ -530,11 +600,12 @@ function CandidateCard({ candidate, selected, onSelect }: {
                     : <span className="fallback">🛍️</span>}
             </span>
             <span className="candidate-price">
-                <b>{money(candidate.price)}</b>
-                {discount > 0 && <del>{money(candidate.oldPrice)}</del>}
+                <b>{money(label.price)}</b>
+                {label.per && <i>/{label.per}</i>}
+                {discount > 0 && label.oldPrice > label.price && <del>{money(label.oldPrice)}</del>}
             </span>
             <span className="candidate-name">{candidate.title}</span>
-            {candidate.packaging && <span className="candidate-pack">{candidate.packaging}</span>}
+            {note && <span className="candidate-pack">{note}</span>}
         </button>
     );
 }
@@ -864,26 +935,32 @@ function ShelfSheet({ listId, item, onClose, onPicked }: {
             {error && <p className="sheet-error">{error}</p>}
 
             <div className="search-results">
-                {results.map(candidate => (
-                    <button key={candidate.productId} className="search-result" onClick={() => onPicked(results, candidate)}>
-                        <span className="search-result-media">
-                            {candidate.imageUrl ? <img src={candidate.imageUrl} alt="" loading="lazy" /> : '🛍️'}
-                        </span>
-                        <span className="search-result-copy">
-                            <strong>{candidate.title}</strong>
-                            <span>
-                                {candidate.packaging}
-                                {candidate.packaging && !candidate.inStock ? ' · ' : ''}
-                                {!candidate.inStock && 'немає в наявності'}
+                {results.map(candidate => {
+                    const label = shelfLabel(candidate);
+                    const facts = [
+                        candidate.weighted
+                            ? `на вагу, мін. ${formatAmount(stepOf(candidate), unitOf(candidate))}`
+                            : candidate.packaging,
+                        candidate.inStock ? '' : 'немає в наявності',
+                    ].filter(Boolean);
+                    return (
+                        <button key={candidate.productId} className="search-result" onClick={() => onPicked(results, candidate)}>
+                            <span className="search-result-media">
+                                {candidate.imageUrl ? <img src={candidate.imageUrl} alt="" loading="lazy" /> : '🛍️'}
                             </span>
-                            <b>
-                                {money(candidate.price)}
-                                {candidate.oldPrice > candidate.price && <del>{money(candidate.oldPrice)}</del>}
-                            </b>
-                        </span>
-                        {candidate.productId === item.selectedProductId && <Check size={17} color="#16845b" />}
-                    </button>
-                ))}
+                            <span className="search-result-copy">
+                                <strong>{candidate.title}</strong>
+                                <span>{facts.join(' · ')}</span>
+                                <b>
+                                    {money(label.price)}
+                                    {label.per && <i>/{label.per}</i>}
+                                    {label.oldPrice > label.price && <del>{money(label.oldPrice)}</del>}
+                                </b>
+                            </span>
+                            {candidate.productId === item.selectedProductId && <Check size={17} color="#16845b" />}
+                        </button>
+                    );
+                })}
 
                 {results.length < total && (
                     <button className="more-button wide" onClick={() => void loadMore()} disabled={loadingMore}>
@@ -946,7 +1023,17 @@ function SuccessScreen({ result, store }: {
         <div className="shell">
             <header className="header">
                 <img className="brand-logo" src={LOGO} alt="Шільпо" />
-                <span className="store-chip static">Готово</span>
+                {/*
+                 * This looked exactly like the store chip beside it — same pill,
+                 * same place — so it read as tappable and did nothing when
+                 * tapped. Anything shaped like a control has to be one, and the
+                 * only thing «Готово» can honestly mean here is: close this and
+                 * go back to the chat.
+                 */}
+                <button className="store-chip" onClick={closeApp}>
+                    <Check size={13} />
+                    <span>Готово</span>
+                </button>
             </header>
             <main className="content" style={{ paddingTop: 22 }}>
                 <div className="success-card">

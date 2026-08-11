@@ -15,8 +15,11 @@ import {
     CANDIDATES_PER_SEARCH,
     loadShelf,
     SHELF_SORTS,
+    type ProductCandidate,
     type ShelfSort,
 } from '../silpo/products';
+import { fetchCatalogProduct } from '../silpo/catalog';
+import { quantityFor, snapQuantity, unitOf } from '../silpo/quantity';
 import { loadFamiliaritySafely } from '../silpo/familiarity';
 import {
     abandonActiveLists,
@@ -29,6 +32,7 @@ import {
     selectProduct,
     setCandidates,
     updateItem,
+    type ListItemRecord,
     type ListRecord,
 } from '../lists/repository';
 import { buildSelection, runSearch } from '../lists/flow';
@@ -189,7 +193,10 @@ export function createApp(bot: Telegraf) {
                 label: [line.item.query, line.item.note].filter(Boolean).join(', '),
                 rawText: line.item.rawText,
                 quantity: line.quantity,
-                unit: line.item.unit,
+                // The chosen product's unit, not the one the list was written
+                // in: the stepper counts what Silpo sells, and "2 шт" over a
+                // loaf priced by weight is an amount nobody can buy.
+                unit: line.unit,
                 selectedProductId: line.item.selectedProductId,
                 candidates: line.item.candidates,
                 // What the strip is a slice of, so it can say so.
@@ -332,12 +339,37 @@ export function createApp(bot: Telegraf) {
         }
     });
 
-    async function itemForRequest(req: express.Request): Promise<{ listId: string; itemId: string } | null> {
+    async function itemForRequest(req: express.Request): Promise<{ list: ListRecord; item: ListItemRecord } | null> {
         const item = await getItem(String(req.body?.itemId || ''));
         if (!item || item.listId !== req.params.listId) return null;
         const list = await getList(item.listId);
         if (!list || list.tgId !== req.tgId) return null;
-        return { listId: list.listId, itemId: item.itemId };
+        return { list, item };
+    }
+
+    /**
+     * Records the guest's choice and re-reads the amount in its terms.
+     *
+     * Swapping a packaged loaf for one cut to order turns "2" from two packs
+     * into two kilograms unless the stored amount is re-read in the new
+     * product's unit — and a product with a 0,8 кг minimum has to be raised to
+     * it, because Silpo will not sell less.
+     *
+     * A line only holds a strip of the shelf, so anything chosen deeper in «Усі
+     * варіанти» has to be added to it. Silently storing an id the line does not
+     * carry is how a chosen product used to vanish from the cart without a word.
+     */
+    async function chooseProduct(item: ListItemRecord, productId: string, product: ProductCandidate | null): Promise<void> {
+        await selectProduct(item.itemId, productId);
+        if (!product) return;
+        if (!item.candidates.some(candidate => candidate.productId === productId)) {
+            await setCandidates(
+                item.itemId,
+                [product, ...item.candidates].slice(0, CANDIDATES_PER_SEARCH),
+                Math.max(item.candidatesTotal, item.candidates.length + 1)
+            );
+        }
+        await updateItem(item.itemId, { quantity: quantityFor(product, item), unit: unitOf(product) });
     }
 
     app.post('/api/list/:listId/select', async (req, res) => {
@@ -346,8 +378,22 @@ export function createApp(bot: Telegraf) {
             res.status(404).json({ error: 'Item not found' });
             return;
         }
-        await selectProduct(target.itemId, String(req.body?.productId || ''));
-        res.json({ ok: true, ...(await totalsFor(target.listId)) });
+        const productId = String(req.body?.productId || '');
+        const known = target.item.candidates.find(candidate => candidate.productId === productId) || null;
+        try {
+            // Only Silpo gets to say what a product costs, so a choice made
+            // beyond the stored strip is looked up rather than taken on trust
+            // from whatever the phone posted.
+            const product = known ?? await withSilpoToken(req.tgId!, async (token) => {
+                const context = await getStoreContext(token, await getStorePreference(req.tgId!));
+                return fetchCatalogProduct(context, productId);
+            });
+            await chooseProduct(target.item, productId, product);
+        } catch (error) {
+            console.warn('[API] Could not price the chosen product:', error);
+            await chooseProduct(target.item, productId, known);
+        }
+        res.json({ ok: true, ...(await totalsFor(target.list.listId)) });
     });
 
     app.post('/api/list/:listId/quantity', async (req, res) => {
@@ -356,9 +402,14 @@ export function createApp(bot: Telegraf) {
             res.status(404).json({ error: 'Item not found' });
             return;
         }
-        const quantity = Math.max(1, Math.min(99, Math.round(Number(req.body?.quantity) || 1)));
-        await updateItem(target.itemId, { quantity, needsQuantity: false });
-        res.json({ ok: true, quantity, ...(await totalsFor(target.listId)) });
+        // The Mini App steps in the chosen product's own unit, so this arrives
+        // already in kilograms for weighted goods — snapped rather than rounded,
+        // or 0,3 кг of cheese would become one whole kilogram.
+        const item = target.item;
+        const product = item.candidates.find(candidate => candidate.productId === item.selectedProductId) || null;
+        const quantity = snapQuantity(product, req.body?.quantity);
+        await updateItem(item.itemId, { quantity, needsQuantity: false });
+        res.json({ ok: true, quantity, ...(await totalsFor(target.list.listId)) });
     });
 
     app.post('/api/list/:listId/remove', async (req, res) => {
@@ -367,8 +418,8 @@ export function createApp(bot: Telegraf) {
             res.status(404).json({ error: 'Item not found' });
             return;
         }
-        await updateItem(target.itemId, { dropped: Boolean(req.body?.dropped ?? true) });
-        res.json({ ok: true, ...(await totalsFor(target.listId)) });
+        await updateItem(target.item.itemId, { dropped: Boolean(req.body?.dropped ?? true) });
+        res.json({ ok: true, ...(await totalsFor(target.list.listId)) });
     });
 
     /**
@@ -395,12 +446,11 @@ export function createApp(bot: Telegraf) {
         const pageSize = Math.max(1, Math.min(60, Math.round(Number(req.body?.limit) || 30)));
 
         try {
-            const list = await getList(target.listId);
             const shelf = await withSilpoToken(tgId, async (token) => {
                 const context = await getStoreContext(token, await getStorePreference(tgId));
                 const familiarity = await loadFamiliaritySafely(tgId, context, token);
                 return loadShelf(context, query, {
-                    preference: list?.preference ?? 'familiar',
+                    preference: target.list.preference ?? 'familiar',
                     familiarity,
                 }, sort);
             });
@@ -409,7 +459,14 @@ export function createApp(bot: Telegraf) {
             // The first page becomes the line's strip, so a guest who searched
             // and closed the sheet keeps what they found.
             if (offset === 0 && page.length) {
-                await setCandidates(target.itemId, page.slice(0, CANDIDATES_PER_SEARCH), shelf.length);
+                const candidates = page.slice(0, CANDIDATES_PER_SEARCH);
+                await setCandidates(target.item.itemId, candidates, shelf.length);
+                // Replacing the strip can strand the selection outside it, and a
+                // line whose chosen product no longer exists is quietly left out
+                // of the cart. The best of what is now on screen takes over.
+                if (!candidates.some(candidate => candidate.productId === target.item.selectedProductId)) {
+                    await chooseProduct({ ...target.item, candidates }, candidates[0].productId, candidates[0]);
+                }
             }
             res.json({ ok: true, candidates: page, total: shelf.length, offset, sort });
         } catch (error) {

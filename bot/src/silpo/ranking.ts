@@ -1,4 +1,5 @@
 import type { ProductCandidate } from './products';
+import { startingPrice } from './quantity';
 
 // Which product should sit first under a list line. Catalogue search returns
 // whatever matches the words, so "молоко" happily brings back condensed milk
@@ -86,6 +87,21 @@ function headWordPresent(title: string, query: string): boolean {
     return relevanceOf(title, head) > 0;
 }
 
+/**
+ * Whether the title says this *is* the thing, or only that it contains it.
+ *
+ * Silpo names a product by its kind first — "Молоко «Селянське» питне…", "Яйця
+ * курячі С1…", "Пиво Stella Artois світле". Word-share relevance cannot tell
+ * those from "Напій кавовий MacCoffee 3 в 1 згущене молоко" or "Майонез
+ * «Європейський» на перепелиних яйцях": both mention the word, so both score a
+ * perfect match. Leading with the kind is the difference.
+ */
+function leadsWithKind(title: string, query: string): boolean {
+    const [kind] = meaningfulWords(query);
+    const [lead] = meaningfulWords(title);
+    return Boolean(kind && lead && stemsMatch(kind, lead));
+}
+
 function isFamiliar(product: ProductCandidate, familiarity: Familiarity): boolean {
     if (familiarity.productIds.has(product.productId)) return true;
     return familiarity.titles.has(normalizeText(product.title));
@@ -119,6 +135,19 @@ const FAMILIARITY_BONUS: Record<SearchPreference, number> = {
     premium: 60,
 };
 
+/**
+ * How much "this is the thing itself" is worth. More than the whole price
+ * spread, or a 5,99 ₴ coffee sachet wins «Найдешевше» for "молоко" and a
+ * mayonnaise wins it for "яйця" — which is what a wider shelf started doing,
+ * because it finally contained cheap impostors the old search never found.
+ *
+ * A bonus and not a filter: plenty of honest titles lead with something else —
+ * "Крупа Повна Чаша гречана" for "гречка", "Вироби макаронні" for "макарони",
+ * "Папір туалетний" for "туалетний папір". When nothing on the shelf leads with
+ * the kind, nothing is promoted and the order is what it was.
+ */
+const KIND_FIRST_BONUS = 500;
+
 export function scoreCandidate(
     product: ProductCandidate,
     query: string,
@@ -127,12 +156,13 @@ export function scoreCandidate(
 ): number {
     let score = relevanceOf(product.title, query) * 1000;
     if (!headWordPresent(product.title, query)) score -= 600;
+    if (leadsWithKind(product.title, query)) score += KIND_FIRST_BONUS;
     // Something the guest cannot buy today is never the right default.
     if (!product.inStock) score -= 2000;
     if (isFamiliar(product, context.familiarity)) score += FAMILIARITY_BONUS[context.preference];
 
     const span = Math.max(1, priceRange.max - priceRange.min);
-    const relativePrice = (product.price - priceRange.min) / span;
+    const relativePrice = (startingPrice(product) - priceRange.min) / span;
 
     switch (context.preference) {
         case 'cheap':
@@ -157,13 +187,22 @@ export function scoreCandidate(
     return score;
 }
 
+/**
+ * Cheap compared against what.
+ *
+ * A per-kilogram price is not comparable to a per-package one: bread at 124,74
+ * ₴/кг is not dearer than a 34,99 ₴ loaf, and 12,47 ₴ per 100 г is not cheaper
+ * than either. What the guest can compare is the least each option can cost
+ * them — one package, or one minimum portion of what is cut to order — so that
+ * is the number "найдешевше" and "найкраще" both range over.
+ */
 export function rankCandidates(
     products: ProductCandidate[],
     query: string,
     context: RankingContext
 ): ProductCandidate[] {
     if (products.length <= 1) return [...products];
-    const prices = products.map(product => product.price).filter(price => price > 0);
+    const prices = products.map(startingPrice).filter(price => price > 0);
     const priceRange = {
         min: prices.length ? Math.min(...prices) : 0,
         max: prices.length ? Math.max(...prices) : 0,
