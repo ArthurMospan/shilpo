@@ -119,7 +119,7 @@ export function createServer(bot: Telegraf) {
             });
         } catch (error) {
             if (error instanceof SilpoNotConnectedError) {
-                res.status(401).json({ error: 'Silpo account is not connected' });
+                res.status(401).json({ error: 'Silpo account is not connected', code: 'silpo_not_connected' });
                 return;
             }
             console.error('[API] Failed to load list:', error);
@@ -249,7 +249,7 @@ export function createServer(bot: Telegraf) {
             });
         } catch (error) {
             if (error instanceof SilpoNotConnectedError) {
-                res.status(401).json({ error: 'Silpo account is not connected' });
+                res.status(401).json({ error: 'Silpo account is not connected', code: 'silpo_not_connected' });
                 return;
             }
             console.error('[API] Checkout failed:', error);

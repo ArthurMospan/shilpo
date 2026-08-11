@@ -65,8 +65,7 @@ export default function App() {
             })
             .catch((error: unknown) => {
                 if (cancelled) return;
-                const status = error instanceof api.ApiError ? error.status : 0;
-                setLoadError(status === 401 ? 'not-connected' : status === 404 ? 'no-list' : 'failed');
+                setLoadError(loadErrorKind(error));
             });
         return () => { cancelled = true; };
     }, [listId]);
@@ -253,6 +252,14 @@ export default function App() {
             {toast && <div className="toast">{toast}</div>}
         </div>
     );
+}
+
+/** A 401 has two very different causes — never blame the Silpo account for a Telegram one. */
+function loadErrorKind(error: unknown): string {
+    if (!(error instanceof api.ApiError)) return 'failed';
+    if (error.status === 404) return 'no-list';
+    if (error.status !== 401) return 'failed';
+    return error.code === 'telegram_identity' ? 'telegram' : 'not-connected';
 }
 
 function deliveryLabel(deliveryType: string): string {
@@ -492,9 +499,11 @@ function LoadingScreen() {
 function ErrorScreen({ kind }: { kind: string }) {
     const content = kind === 'not-connected'
         ? { emoji: '🔐', title: 'Кабінет Сільпо не підключено', text: 'Повернись у чат і натисни «Підключити Кабінет Сільпо».' }
-        : kind === 'no-list'
-            ? { emoji: '📝', title: 'Списку немає', text: 'Надішли боту фото свого списку покупок або напиши товари текстом — і я підберу їх у Сільпо.' }
-            : { emoji: '😞', title: 'Щось пішло не так', text: 'Спробуй відкрити список ще раз за хвилину.' };
+        : kind === 'telegram'
+            ? { emoji: '🔄', title: 'Telegram не підтвердив вхід', text: 'Закрий це вікно й відкрий список кнопкою в чаті ще раз. Якщо не допомогло — онови Telegram до останньої версії.' }
+            : kind === 'no-list'
+                ? { emoji: '📝', title: 'Списку немає', text: 'Надішли боту фото свого списку покупок або напиши товари текстом — і я підберу їх у Сільпо.' }
+                : { emoji: '😞', title: 'Щось пішло не так', text: 'Спробуй відкрити список ще раз за хвилину.' };
 
     return (
         <div className="state-screen">

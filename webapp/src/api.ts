@@ -2,7 +2,7 @@ import { telegram } from './telegram';
 import type { CheckoutResponse, ListResponse, ProductCandidate } from './types';
 
 export class ApiError extends Error {
-    constructor(message: string, readonly status: number) {
+    constructor(message: string, readonly status: number, readonly code = '') {
         super(message);
         this.name = 'ApiError';
     }
@@ -20,8 +20,12 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
         },
     });
     if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new ApiError(String((body as any)?.error || `HTTP ${response.status}`), response.status);
+        const body: any = await response.json().catch(() => ({}));
+        throw new ApiError(
+            String(body?.error || `HTTP ${response.status}`),
+            response.status,
+            String(body?.code || '')
+        );
     }
     return response.json() as Promise<T>;
 }

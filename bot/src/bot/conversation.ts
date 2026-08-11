@@ -8,8 +8,8 @@ import {
     setChatMessageId,
     type ListRecord,
 } from '../lists/repository';
-import { nextQuestion, runSearch, type PendingQuestion } from '../lists/flow';
-import { escapeHtml, itemPreviewLine, pluralizeItems, pluralizeProducts } from './format';
+import { nextQuestion, questionForItem, runSearch, type PendingQuestion } from '../lists/flow';
+import { escapeHtml, itemPreviewLine, pluralizeDetails, pluralizeItems, pluralizeProducts } from './format';
 import { signAuthLink } from '../auth/link';
 
 export function webappUrl(): string {
@@ -45,10 +45,13 @@ export async function sendRecognizedList(ctx: Context, list: ListRecord): Promis
         return;
     }
 
-    const uncertain = items.filter(item => item.clarification?.question).length;
+    // Count every question the guest will actually be asked, including the
+    // missing-quantity ones — promising "one detail" and then asking four
+    // reads as the bot losing track.
+    const pending = items.filter(item => questionForItem(item) !== null).length;
     const lines = items.map(itemPreviewLine).join('\n');
-    const footer = uncertain
-        ? `\n\nУточню ${uncertain === 1 ? 'одну деталь' : `${uncertain} деталі`} — і одразу шукаю в Сільпо.`
+    const footer = pending
+        ? `\n\nУточню ${pending === 1 ? 'одну' : pending} ${pluralizeDetails(pending)} — і одразу шукаю в Сільпо.`
         : '\n\nШукаю ці товари в Сільпо…';
 
     await ctx.reply(
