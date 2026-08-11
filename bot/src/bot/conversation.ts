@@ -11,6 +11,7 @@ import {
 } from '../lists/repository';
 import { nextQuestion, questionForItem, runSearch, type PendingQuestion } from '../lists/flow';
 import { escapeHtml, itemPreviewLine, pluralizeDetails, pluralizeItems, pluralizeProducts } from './format';
+import { styled } from './buttons';
 import { signAuthLink } from '../auth/link';
 import { publicBaseUrl } from '../config';
 
@@ -24,7 +25,7 @@ export function pickerUrl(listId: string): string {
 
 export function connectKeyboard(tgId: number) {
     return Markup.inlineKeyboard([
-        [Markup.button.url('🔗 Підключити Кабінет Сільпо', signAuthLink(webappUrl(), tgId))],
+        [styled(Markup.button.url('🔗 Підключити Кабінет Сільпо', signAuthLink(webappUrl(), tgId)), 'primary')],
     ]);
 }
 
@@ -44,7 +45,10 @@ export const CART_BUTTON = '🛒 Мій кошик';
  * messages that carry no inline buttons of their own.
  */
 export function mainKeyboard() {
-    return Markup.keyboard([[Markup.button.text(NEW_LIST_BUTTON), Markup.button.text(CART_BUTTON)]])
+    return Markup.keyboard([[
+        styled(Markup.button.text(NEW_LIST_BUTTON), 'primary'),
+        Markup.button.text(CART_BUTTON),
+    ]])
         .resize()
         .persistent();
 }
@@ -97,7 +101,8 @@ function questionKeyboard(question: PendingQuestion) {
     }
     rows.push([
         Markup.button.callback('✏️ Інше', `other:${question.item.itemId}`),
-        Markup.button.callback('🚫 Не треба', `drop:${question.item.itemId}`),
+        // Red because it removes a line from the list, not because it is scary.
+        styled(Markup.button.callback('🚫 Не треба', `drop:${question.item.itemId}`), 'danger'),
     ]);
     return Markup.inlineKeyboard(rows);
 }
@@ -182,7 +187,7 @@ export async function searchAndInvite(
                 {
                     parse_mode: 'HTML',
                     ...Markup.inlineKeyboard([
-                        [Markup.button.webApp('📍 Змінити магазин', pickerUrl(listId))],
+                        [styled(Markup.button.webApp('📍 Змінити магазин', pickerUrl(listId)), 'primary')],
                     ]),
                 }
             );
@@ -223,7 +228,7 @@ export async function searchAndInvite(
         await ctx.reply(lines.join('\n'), {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([
-                [Markup.button.webApp(`🛒 Обрати товари (${found.length})`, pickerUrl(listId))],
+                [styled(Markup.button.webApp(`🛒 Обрати товари (${found.length})`, pickerUrl(listId)), 'primary')],
             ]),
         });
     } catch (error) {

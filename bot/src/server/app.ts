@@ -35,6 +35,7 @@ import { buildSelection, runSearch } from '../lists/flow';
 import { requireTelegramUser } from '../auth/telegram-webapp';
 import { verifyAuthLink } from '../auth/link';
 import { mainKeyboard, resumePendingList, summarizeCartResult } from '../bot/conversation';
+import { styled } from '../bot/buttons';
 import { connectedPage, errorPage } from './pages';
 import { publicBaseUrl as configuredBaseUrl } from '../config';
 
@@ -465,7 +466,10 @@ export function createApp(bot: Telegraf) {
                 {
                     parse_mode: 'HTML',
                     reply_markup: {
-                        inline_keyboard: [[{ text: '🧾 Оформити замовлення', url: SILPO_BASKET_URL }]],
+                        // Green: the list is in the cart, this is the finish.
+                        inline_keyboard: [[
+                            styled({ text: '🧾 Оформити замовлення', url: SILPO_BASKET_URL }, 'success'),
+                        ]],
                     },
                 }
             ).catch(() => undefined);

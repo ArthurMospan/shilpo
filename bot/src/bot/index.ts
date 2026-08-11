@@ -33,6 +33,7 @@ import {
     sendRecognizedList,
 } from './conversation';
 import { escapeHtml, pluralizeProducts } from './format';
+import { styled } from './buttons';
 
 const MAX_LIST_TEXT_LENGTH = 3000;
 
@@ -246,7 +247,9 @@ export function createBot(): Telegraf {
                 `Разом: <b>${formatPrice(summary.cart.total)}</b>`,
                 {
                     parse_mode: 'HTML',
-                    ...Markup.inlineKeyboard([[Markup.button.url('Перейти до кошика', SILPO_BASKET_URL)]]),
+                    ...Markup.inlineKeyboard([[
+                        styled(Markup.button.url('Перейти до кошика', SILPO_BASKET_URL), 'primary'),
+                    ]]),
                 }
             );
         } catch (error) {
