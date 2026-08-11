@@ -4,7 +4,6 @@
   "buildCommand": "npm run build --prefix webapp",
   "outputDirectory": "webapp/dist",
   "framework": null,
-  "//": "A catch-all filename (api/[...path].ts) produces no route in a zero-config project, so /api/* is routed to a plainly named function instead. A rewrite keeps the original path and query string in req.url, which is what lets one Express app serve every route.",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/index.html" }
