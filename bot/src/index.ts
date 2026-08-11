@@ -20,6 +20,23 @@ async function main(): Promise<void> {
 
     await dbReady;
     const bot = createBot();
+
+    // Telegraf clears the webhook before it starts long polling. A leftover
+    // process — an old host still running, a laptop session someone forgot —
+    // therefore silently takes the bot away from the deployed webhook, and
+    // nothing about it looks broken from either side. Refuse to be that
+    // process unless the operator says so.
+    const existingWebhook = await bot.telegram.getWebhookInfo().catch(() => null);
+    if (existingWebhook?.url && process.env.FORCE_POLLING !== '1') {
+        console.error(
+            `❌ A webhook is registered at ${existingWebhook.url}.\n` +
+            '   Starting long polling would delete it and hijack the deployed bot.\n' +
+            '   Run "npm run webhook:delete" to switch this bot back to polling,\n' +
+            '   or set FORCE_POLLING=1 if you really mean to take over.'
+        );
+        process.exit(1);
+    }
+
     startServer(bot);
 
     let stopping = false;
