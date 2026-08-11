@@ -1,6 +1,5 @@
 import path from 'path';
 import dotenv from 'dotenv';
-import Database from 'better-sqlite3';
 import { createClient, type Client, type InArgs, type ResultSet } from '@libsql/client';
 
 dotenv.config();
@@ -9,8 +8,24 @@ const tursoUrl = process.env.TURSO_DATABASE_URL;
 const turso: Client | null = tursoUrl
     ? createClient({ url: tursoUrl, authToken: process.env.TURSO_AUTH_TOKEN })
     : null;
-const local = turso ? null : new Database(process.env.DATABASE_PATH || path.resolve(__dirname, '../../database.sqlite'));
-if (local) local.pragma('foreign_keys = ON');
+
+// better-sqlite3 is a native module and only exists for local development.
+// Requiring it lazily keeps it out of the serverless bundle, where Turso is
+// always configured and a native build would fail to load.
+function openLocalDatabase(): any {
+    // The module name is assembled at runtime on purpose: a literal would let
+    // the serverless bundler trace this native dependency and try to ship it,
+    // which fails to load on Vercel. This branch never runs there — Turso is
+    // always configured in the cloud.
+    const moduleName = ['better', 'sqlite3'].join('-');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const Database = require(moduleName);
+    const database = new Database(process.env.DATABASE_PATH || path.resolve(__dirname, '../../database.sqlite'));
+    database.pragma('foreign_keys = ON');
+    return database;
+}
+
+const local: any = turso ? null : openLocalDatabase();
 
 const schemaStatements = [
     `CREATE TABLE IF NOT EXISTS users (
@@ -59,6 +74,16 @@ const schemaStatements = [
     )`,
     `CREATE INDEX IF NOT EXISTS idx_list_items_list ON list_items(list_id, position)`,
     `CREATE INDEX IF NOT EXISTS idx_lists_user ON lists(tg_id, updated_at)`,
+    // The OAuth handshake spans two requests that may land on different
+    // serverless instances, so the PKCE verifier cannot live in process memory.
+    `CREATE TABLE IF NOT EXISTS oauth_states (
+        state TEXT PRIMARY KEY,
+        tg_id INTEGER NOT NULL,
+        client_id TEXT NOT NULL,
+        code_verifier TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+    )`,
 ];
 
 function normalizeArgs(args: unknown[]): InArgs {

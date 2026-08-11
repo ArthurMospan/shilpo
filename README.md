@@ -74,14 +74,39 @@ npm run build --prefix bot
 npm run build --prefix webapp
 ```
 
-## Деплой
+## Два режими роботи
 
-Потрібен процес, який живе постійно: бот тримає long-polling до Telegram, а той самий процес віддає Mini App і приймає OAuth-редірект від Сільпо.
+Бот однаково працює як довгоживучий процес і як serverless-функція:
 
-- **Render** — `render.yaml` у репозиторії. Змінні `BOT_TOKEN`, `GEMINI_API_KEY`, `WEBAPP_URL`, `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` задаються в дашборді.
-- **Docker** — `Dockerfile` збирає Mini App і бот, запускає `node bot/dist/index.js`.
+- **Webhook (production, Vercel).** Telegram сам стукає в `POST /api/telegram`, функція піднімається на час обробки й гасне. Нічого не «спить» і не потребує штучних пінгів. Автентичність апдейту підтверджує `TELEGRAM_WEBHOOK_SECRET`, який Telegram повертає в заголовку.
+- **Long polling (локальна розробка).** `npm run dev --prefix bot` піднімає той самий Express-додаток плюс роздачу Mini App і тримає polling.
 
-Після деплою `WEBAPP_URL` має точно збігатися з публічною адресою сервісу: за нею Telegram відкриває Mini App, і на неї ж Сільпо повертає OAuth-код.
+Serverless нічого не тримає в пам'яті між викликами, тому PKCE-стан OAuth лежить у таблиці `oauth_states`, а не в змінній процесу: `/api/auth/start` і `/api/auth/callback` можуть потрапити в різні інстанси. Обробка апдейту продовжується після відповіді Telegram через `waitUntil` — розбір фото й пошук 30 позицій довші, ніж вебхук має право тримати з'єднання.
+
+## Деплой на Vercel
+
+```bash
+npx vercel link
+npx vercel env add BOT_TOKEN production
+npx vercel env add GEMINI_API_KEY production
+npx vercel env add TELEGRAM_WEBHOOK_SECRET production
+npx vercel env add TURSO_DATABASE_URL production
+npx vercel env add TURSO_AUTH_TOKEN production
+npx vercel env add WEBAPP_URL production      # публічна адреса проєкту
+npx vercel deploy --prod
+```
+
+Після деплою треба один раз показати Telegram, куди слати апдейти:
+
+```bash
+npm run webhook:set https://ваш-проєкт.vercel.app
+npm run webhook:info     # перевірити
+npm run webhook:delete   # повернутись до локального polling
+```
+
+`WEBAPP_URL` має точно збігатися з публічною адресою: за нею Telegram відкриває Mini App і на неї ж Сільпо повертає OAuth-код. Перевірити можна на `/api/health` — він віддає і адресу, і тип бази, і режим роботи.
+
+**Альтернативи:** `render.yaml` і `Dockerfile` лишились у репозиторії для запуску довгоживучим процесом. Там бот працює на long-polling, і на безкоштовному плані Render сервіс засинає без трафіку — знадобиться зовнішній пінг.
 
 ## Структура репозиторію
 
@@ -91,9 +116,12 @@ bot/
   src/silpo/       MCP-клієнт, OAuth, магазин, пошук товарів, кошик
   src/lists/       стан списку, питання, відповіді, підсумковий вибір
   src/bot/         Telegram-флоу та форматування повідомлень
-  src/server/      API для Mini App, OAuth-редіректи, статика
+  src/server/      Express-додаток (API, OAuth, вебхук) і локальний запуск
   src/db/          Turso/SQLite
 webapp/            React Mini App: пікер товарів
-render.yaml
+api/               точка входу Vercel: одна функція на весь /api/*
+scripts/           реєстрація Telegram-вебхука
+vercel.json        production-деплой
+render.yaml        альтернатива: довгоживучий процес
 Dockerfile
 ```

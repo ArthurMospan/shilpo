@@ -1,0 +1,16 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci --include=dev --prefix bot && npm ci --include=dev --prefix webapp",
+  "buildCommand": "npm run build --prefix webapp",
+  "outputDirectory": "webapp/dist",
+  "framework": null,
+  "functions": {
+    "api/[...path].ts": {
+      "maxDuration": 300,
+      "memory": 1024
+    }
+  },
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}

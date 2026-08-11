@@ -11,19 +11,40 @@ interface PendingAuth {
     codeVerifier: string;
     tgId: number;
     redirectUri: string;
-    createdAt: number;
 }
 
-const PENDING_TTL_MS = 10 * 60 * 1000;
-// Keyed by the `state` parameter so several guests can authorize at once —
-// a single shared slot would hand guest A's code to guest B's session.
-const pendingAuth = new Map<string, PendingAuth>();
+const PENDING_TTL_SECONDS = 10 * 60;
 
-function prunePending(): void {
-    const cutoff = Date.now() - PENDING_TTL_MS;
-    for (const [state, entry] of pendingAuth) {
-        if (entry.createdAt < cutoff) pendingAuth.delete(state);
-    }
+// Keyed by the `state` parameter so several guests can authorize at once — a
+// single shared slot would hand guest A's code to guest B's session. Stored in
+// the database rather than in memory because /auth/start and /auth/callback are
+// two separate requests that need not reach the same process.
+async function rememberPendingAuth(state: string, pending: PendingAuth): Promise<void> {
+    await db.prepare(`
+        INSERT INTO oauth_states (state, tg_id, client_id, code_verifier, redirect_uri, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+        state,
+        pending.tgId,
+        pending.clientId,
+        pending.codeVerifier,
+        pending.redirectUri,
+        Math.floor(Date.now() / 1000) + PENDING_TTL_SECONDS
+    );
+}
+
+/** Reads a pending handshake and consumes it, so an authorization code cannot be replayed. */
+async function takePendingAuth(state: string): Promise<PendingAuth | null> {
+    const row = await db.prepare('SELECT * FROM oauth_states WHERE state = ?').get(state);
+    await db.prepare('DELETE FROM oauth_states WHERE state = ? OR expires_at < ?')
+        .run(state, Math.floor(Date.now() / 1000));
+    if (!row || Number(row.expires_at) <= Math.floor(Date.now() / 1000)) return null;
+    return {
+        tgId: Number(row.tg_id),
+        clientId: String(row.client_id),
+        codeVerifier: String(row.code_verifier),
+        redirectUri: String(row.redirect_uri),
+    };
 }
 
 function codeChallengeFor(verifier: string): string {
@@ -50,11 +71,10 @@ async function registerClient(redirectUri: string): Promise<string> {
 }
 
 export async function buildAuthorizeUrl(tgId: number, redirectUri: string): Promise<string> {
-    prunePending();
     const clientId = await registerClient(redirectUri);
     const codeVerifier = crypto.randomBytes(32).toString('base64url');
     const state = crypto.randomBytes(16).toString('hex');
-    pendingAuth.set(state, { clientId, codeVerifier, tgId, redirectUri, createdAt: Date.now() });
+    await rememberPendingAuth(state, { clientId, codeVerifier, tgId, redirectUri });
 
     const authorizeUrl = new URL(`${MCP_BASE}/authorize`);
     authorizeUrl.searchParams.set('response_type', 'code');
@@ -88,10 +108,8 @@ async function persistTokens(tgId: number, clientId: string, tokens: any): Promi
 
 /** Exchanges the authorization code. Returns the Telegram id that started the flow. */
 export async function completeAuthorization(code: string, state: string): Promise<number> {
-    prunePending();
-    const pending = pendingAuth.get(state);
+    const pending = await takePendingAuth(state);
     if (!pending) throw new Error('Unknown or expired OAuth state');
-    pendingAuth.delete(state);
 
     const response = await fetch(`${MCP_BASE}/token`, {
         method: 'POST',

@@ -8,6 +8,9 @@
     "build": "npm run build --prefix webapp && npm run build --prefix bot",
     "dev": "npm run dev --prefix bot",
     "start": "npm run start --prefix bot",
-    "test": "npm test --prefix bot"
+    "test": "npm test --prefix bot",
+    "webhook:set": "node scripts/set-webhook.mjs",
+    "webhook:info": "node scripts/set-webhook.mjs --info",
+    "webhook:delete": "node scripts/set-webhook.mjs --delete"
   }
 }

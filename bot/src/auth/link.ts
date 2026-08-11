@@ -18,7 +18,7 @@ function signature(payload: string): string {
 export function signAuthLink(baseUrl: string, tgId: number): string {
     const expiresAt = Math.floor(Date.now() / 1000) + LINK_TTL_SECONDS;
     const payload = `${tgId}.${expiresAt}`;
-    const url = new URL('/auth/start', baseUrl);
+    const url = new URL('/api/auth/start', baseUrl);
     url.searchParams.set('tg_id', String(tgId));
     url.searchParams.set('exp', String(expiresAt));
     url.searchParams.set('sig', signature(payload));
