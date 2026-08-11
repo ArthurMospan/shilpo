@@ -4,13 +4,7 @@
   "buildCommand": "npm run build --prefix webapp",
   "outputDirectory": "webapp/dist",
   "framework": null,
-  "functions": {
-    "api/[...path].ts": {
-      "maxDuration": 300,
-      "memory": 1024
-    }
-  },
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
