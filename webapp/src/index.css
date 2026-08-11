@@ -59,12 +59,9 @@ a { color: inherit; }
   background: linear-gradient(135deg, #e85d0b 0%, #f47b26 100%);
   box-shadow: 0 4px 18px rgba(218, 88, 11, .2);
 }
-/* The wordmark is a solid-orange PNG on transparency; flattening it to white
-   keeps one asset working on the orange header and on the light splash. */
-.brand-logo {
-  flex: 0 0 auto; width: auto; height: 26px;
-  filter: brightness(0) invert(1);
-}
+/* The wordmark is a white shape with orange lettering inside, so it reads on
+   the orange header as it is — recolouring it would erase the lettering. */
+.brand-logo { flex: 0 0 auto; width: auto; height: 30px; }
 
 .store-chip {
   display: flex; align-items: center; gap: 6px;

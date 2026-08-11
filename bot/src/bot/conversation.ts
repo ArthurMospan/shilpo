@@ -28,6 +28,27 @@ export function connectKeyboard(tgId: number) {
     ]);
 }
 
+export const NEW_LIST_BUTTON = '📝 Новий список';
+export const CART_BUTTON = '🛒 Мій кошик';
+export const APP_BUTTON = '🍊 Мій список';
+
+/**
+ * The buttons that live by the input field.
+ *
+ * A single Mini App button there was the wrong thing: it opened an app to say
+ * "you have no list", while the two actions a guest actually wants between
+ * lists — start over, look in the cart — had no button at all. Starting a new
+ * list has always been possible by simply sending a photo, but nothing said so.
+ *
+ * Telegram allows one reply markup per message, so this can only ride on
+ * messages that carry no inline buttons of their own.
+ */
+export function mainKeyboard() {
+    const rows = [[Markup.button.text(NEW_LIST_BUTTON), Markup.button.text(CART_BUTTON)]];
+    if (webappUrl()) rows.push([Markup.button.webApp(APP_BUTTON, webappUrl())]);
+    return Markup.keyboard(rows).resize().persistent();
+}
+
 export async function askToConnect(ctx: Context, tgId: number, reason: string): Promise<void> {
     await ctx.reply(
         `${reason}\n\nЦе займе <b>пів хвилини</b>. Сільпо покаже свою сторінку входу, ` +

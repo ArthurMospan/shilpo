@@ -152,6 +152,9 @@ export function normalizeProduct(raw: any): ProductCandidate | null {
     const basePrice = numberOf(raw?.price ?? raw?.currentPrice ?? raw?.salePrice);
     const special = bestSpecialPrice(raw, basePrice);
     const price = special.price || basePrice;
+    // Nothing priceless is buyable, and under "найдешевше" a zero would outrank
+    // every real product. Whatever this object is, it is not an offer.
+    if (price <= 0) return null;
     const listedOld = numberOf(raw?.oldPrice ?? raw?.old_price ?? raw?.originalPrice);
     const oldPrice = listedOld > price ? listedOld : (special.price ? basePrice : 0);
     const externalId = Number(raw?.externalProductId ?? raw?.external_product_id);
@@ -175,17 +178,41 @@ export function normalizeProduct(raw: any): ProductCandidate | null {
     };
 }
 
-/** Collects every product-looking object under a node, keeping document order. */
-function collectProducts(value: any, out: any[] = [], visited = new Set<any>()): any[] {
+/**
+ * What counts as a product rather than something a product mentions.
+ *
+ * "An id and a name" is not enough, and assuming it was is what filled the
+ * picker with rubbish: every product carries a nested `category` and
+ * `trademark`, each with an id and a name, so two beers arrived as six cards —
+ * two real ones, "Пиво" and "Оболонь" twice over. Worse, those cards have no
+ * price, and a price of zero beats every real product under "найдешевше".
+ *
+ * A price is what separates the two. Nothing sellable lacks one, and nothing
+ * without one belongs in front of a guest.
+ */
+function looksLikeProduct(value: any): boolean {
+    const hasIdentity = [value.id, value.productId, value.product_id, value.slug]
+        .some(candidate => candidate !== undefined && candidate !== null && candidate !== '');
+    if (!hasIdentity) return false;
+    if (!textOf(value.title ?? value.name ?? value.productName)) return false;
+    return numberOf(value.price ?? value.currentPrice ?? value.salePrice) > 0;
+}
+
+/** Collects every product under a node, keeping document order. */
+export function collectProducts(value: any, out: any[] = [], visited = new Set<any>()): any[] {
     if (!value || typeof value !== 'object' || visited.has(value)) return out;
     visited.add(value);
     if (Array.isArray(value)) {
         value.forEach(item => collectProducts(item, out, visited));
         return out;
     }
-    const hasIdentity = value.id ?? value.productId ?? value.product_id ?? value.slug;
-    const hasProductShape = value.price ?? value.currentPrice ?? value.title ?? value.name;
-    if (hasIdentity !== undefined && hasProductShape !== undefined) out.push(value);
+    // Once something is a product, its own fields are its attributes — a price
+    // tier, a category, a brand — and never more products. Descending into it
+    // is what turned every product into three.
+    if (looksLikeProduct(value)) {
+        out.push(value);
+        return out;
+    }
     Object.values(value).forEach(nested => collectProducts(nested, out, visited));
     return out;
 }
@@ -199,7 +226,7 @@ function normalizeQueryKey(value: string): string {
  * under a `queries` array; if that shape ever changes, every product falls
  * into one bucket rather than being lost.
  */
-function groupByQuery(response: any, queries: string[]): Map<string, any[]> {
+export function groupByQuery(response: any, queries: string[]): Map<string, any[]> {
     const grouped = new Map<string, any[]>();
     const roots = parseMcpContent(response);
 
@@ -280,7 +307,17 @@ export async function findProductsForQueries(
             // Filter first, then rank: a preference must never promote a
             // product that is not what the guest asked for.
             const relevant = dropIrrelevant(normalized, query);
-            results.set(query, rankCandidates(relevant, query, ranking).slice(0, limitPerQuery));
+            const ranked = rankCandidates(relevant, query, ranking).slice(0, limitPerQuery);
+            results.set(query, ranked);
+            // How wide the choice really is, per line. `raw` against the limit
+            // we asked for is the one number that says whether Silpo honours
+            // `limit` per query or spreads it across the whole batch — which
+            // decides whether a bigger ask would buy the guest anything.
+            console.log(
+                `[Search] "${query}" asked=${limitPerQuery} raw=${raw.length} priced=${normalized.length} `
+                + `relevant=${relevant.length} shown=${ranked.length}`
+                + (ranked.length ? ` cheapest=${formatPrice(Math.min(...ranked.map(p => p.price)))}` : '')
+            );
         }
     }
 

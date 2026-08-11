@@ -23,12 +23,14 @@ import { applyAnswer } from '../lists/answers';
 import {
     advanceConversation,
     askToConnect,
+    CART_BUTTON,
     connectKeyboard,
     isKnownPreference,
+    mainKeyboard,
+    NEW_LIST_BUTTON,
     PREFERENCE_CONFIRMATIONS,
     searchAndInvite,
     sendRecognizedList,
-    webappUrl,
 } from './conversation';
 import { escapeHtml, pluralizeProducts } from './format';
 
@@ -176,18 +178,17 @@ export function createBot(): Telegraf {
         const connected = await isConnected(tgId);
         await ctx.reply(WELCOME, {
             parse_mode: 'HTML',
-            ...(connected ? {} : connectKeyboard(tgId)),
+            // One reply markup per message: an unconnected guest needs the
+            // connect button more than the keyboard, which arrives with the
+            // confirmation the moment they are through.
+            ...(connected ? mainKeyboard() : connectKeyboard(tgId)),
         });
-        if (webappUrl()) {
-            await ctx.setChatMenuButton({
-                type: 'web_app',
-                text: '🍊 Шільпо',
-                web_app: { url: webappUrl() },
-            }).catch(() => undefined);
-        }
+        // The button beside the input is Telegram's command list again. The
+        // Mini App is not a place to land — it is where a list gets picked.
+        await ctx.setChatMenuButton({ type: 'commands' }).catch(() => undefined);
     });
 
-    bot.help(ctx => ctx.reply(HELP, { parse_mode: 'HTML' }));
+    bot.help(ctx => ctx.reply(HELP, { parse_mode: 'HTML', ...mainKeyboard() }));
 
     bot.command('connect', async (ctx) => {
         const tgId = tgIdOf(ctx);
@@ -210,15 +211,17 @@ export function createBot(): Telegraf {
         );
     });
 
-    bot.command('new', async (ctx) => {
+    const startNewList = async (ctx: Context): Promise<void> => {
         await abandonActiveLists(tgIdOf(ctx));
         await ctx.reply(
             '📝 <b>Готова до нового списку</b>\n\nНадсилай фото або пиши товари текстом.',
-            { parse_mode: 'HTML' }
+            { parse_mode: 'HTML', ...mainKeyboard() }
         );
-    });
+    };
 
-    bot.command('cart', async (ctx) => {
+    bot.command('new', startNewList);
+
+    const showCart = async (ctx: Context): Promise<void> => {
         const tgId = tgIdOf(ctx);
         try {
             const summary = await withSilpoToken(tgId, async (token) => {
@@ -229,7 +232,7 @@ export function createBot(): Telegraf {
             if (summary.cart.isEmpty) {
                 await ctx.reply(
                     '🛒 <b>Твій кошик Сільпо порожній</b>\n\nНадішли список — і я його наповню.',
-                    { parse_mode: 'HTML' }
+                    { parse_mode: 'HTML', ...mainKeyboard() }
                 );
                 return;
             }
@@ -254,7 +257,14 @@ export function createBot(): Telegraf {
             console.error('[Bot] Cart command failed:', error);
             await ctx.reply('😞 Не вдалося отримати кошик. Спробуй ще раз трохи пізніше.');
         }
-    });
+    };
+
+    bot.command('cart', showCart);
+
+    // Reply-keyboard taps arrive as ordinary text, so they must be matched
+    // before the handler that would read them as a shopping list.
+    bot.hears(NEW_LIST_BUTTON, startNewList);
+    bot.hears(CART_BUTTON, showCart);
 
     bot.on(message('photo'), async (ctx) => {
         const tgId = tgIdOf(ctx);

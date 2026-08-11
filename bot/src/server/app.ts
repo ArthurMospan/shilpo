@@ -29,7 +29,7 @@ import {
 import { buildSelection, runSearch } from '../lists/flow';
 import { requireTelegramUser } from '../auth/telegram-webapp';
 import { verifyAuthLink } from '../auth/link';
-import { resumePendingList, summarizeCartResult } from '../bot/conversation';
+import { mainKeyboard, resumePendingList, summarizeCartResult } from '../bot/conversation';
 import { connectedPage, errorPage } from './pages';
 import { publicBaseUrl as configuredBaseUrl } from '../config';
 
@@ -143,11 +143,13 @@ export function createApp(bot: Telegraf) {
             const tgId = await completeAuthorization(code, state);
             res.send(connectedPage());
 
-            // Continue the conversation the guest was in the middle of.
+            // Continue the conversation the guest was in the middle of. This is
+            // also where the reply keyboard lands: the welcome message had to
+            // carry the connect button instead.
             await bot.telegram.sendMessage(
                 tgId,
                 '✅ <b>Кабінет Сільпо підключено!</b>\nТепер я бачу твій магазин, ціни й кошик.',
-                { parse_mode: 'HTML' }
+                { parse_mode: 'HTML', ...mainKeyboard() }
             ).catch(() => undefined);
             const active = await getActiveList(tgId);
             if (active) await resumePendingList(bot, tgId, active.listId).catch(error =>
@@ -248,7 +250,7 @@ export function createApp(bot: Telegraf) {
         await bot.telegram.sendMessage(
             tgId,
             '📝 <b>Готова до нового списку</b>\n\nНадсилай фото списку або пиши товари текстом — по одному в рядку.',
-            { parse_mode: 'HTML' }
+            { parse_mode: 'HTML', ...mainKeyboard() }
         ).catch(() => undefined);
         res.json({ ok: true });
     });
