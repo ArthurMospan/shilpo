@@ -3,6 +3,7 @@ import { mapWithConcurrency, searchCatalogAll } from './catalog';
 import { formatAmount, normalizedUnit, startingPrice } from './quantity';
 import type { StoreContext } from './store';
 import { dropIrrelevant, rankCandidates, type RankingContext } from './ranking';
+import { resolveKind, NO_KIND, type Kind } from './taxonomy';
 
 /** Silpo is someone else's server; a shopping list is no reason to flood it. */
 const CATALOG_CONCURRENCY = 6;
@@ -43,6 +44,12 @@ export interface ProductCandidate {
     /** Multi-buy offers such as "3 за ціною 2". */
     promoLabel: string;
     url: string;
+    /**
+     * The shelf Silpo files this under — "pomidory-4825". This is how a search
+     * for "помідори" reaches a product titled "Томат": the store already knows
+     * they are the same shelf. Empty for MCP results, which carry no shelving.
+     */
+    sectionSlug: string;
 }
 
 const MAX_BATCH_QUERIES = 30;
@@ -262,6 +269,7 @@ export function normalizeProduct(raw: any): ProductCandidate | null {
         hasPromo: Boolean(special.price) || oldPrice > price || Boolean(raw?.hasPromo ?? raw?.isPromo),
         promoLabel: special.label,
         url: slug ? `https://silpo.ua/product/${slug}` : '',
+        sectionSlug: firstText(raw, ['sectionSlug', 'section_slug']),
     };
 }
 
@@ -374,10 +382,14 @@ async function resolveFromCatalog(
 ): Promise<QueryResult> {
     const page = await searchCatalogAll(context, query);
     const normalized = dedupe(page.items);
-    const relevant = dropIrrelevant(normalized, query);
-    const ranked = rankCandidates(relevant, query, ranking).slice(0, limitPerQuery);
+    // Order matters: the shelf is read off Silpo's own relevance ordering, so it
+    // has to be decided before anything is filtered out of that ordering.
+    const kind = resolveKind(normalized, query);
+    const relevant = dropIrrelevant(normalized, query, kind);
+    const ranked = rankCandidates(relevant, query, ranking, kind).slice(0, limitPerQuery);
     console.log(
         `[Search] "${query}" store=${page.total} fetched=${normalized.length} `
+        + `shelf=${kind.confident ? [...kind.sections].join(',') : 'words-only'} `
         + `relevant=${relevant.length} shown=${ranked.length}`
         + (relevant.length ? ` cheapest=${formatPrice(Math.min(...relevant.map(startingPrice)))}` : '')
     );
@@ -388,7 +400,7 @@ export const SHELF_SORTS = ['best', 'cheap', 'promo'] as const;
 export type ShelfSort = (typeof SHELF_SORTS)[number];
 
 const SHELF_TTL_MS = 2 * 60 * 1000;
-const shelfCache = new Map<string, { expiresAt: number; items: ProductCandidate[] }>();
+const shelfCache = new Map<string, { expiresAt: number; items: ProductCandidate[]; kind: Kind }>();
 
 function discountOf(product: ProductCandidate): number {
     return product.oldPrice > product.price ? 1 - product.price / product.oldPrice : 0;
@@ -409,13 +421,18 @@ export async function loadShelf(
 ): Promise<ProductCandidate[]> {
     const key = `${context.branchId}|${context.deliveryType}|${query.toLocaleLowerCase('uk-UA')}`;
     const cached = shelfCache.get(key);
-    let items = cached && cached.expiresAt > Date.now() ? cached.items : null;
+    const fresh = cached && cached.expiresAt > Date.now() ? cached : null;
+    let items = fresh?.items ?? null;
+    let kind = fresh?.kind ?? NO_KIND;
 
     if (!items) {
         const page = await searchCatalogAll(context, query);
-        items = dropIrrelevant(dedupe(page.items), query);
-        shelfCache.set(key, { expiresAt: Date.now() + SHELF_TTL_MS, items });
-        console.log(`[Shelf] "${query}" store=${page.total} relevant=${items.length}`);
+        const normalized = dedupe(page.items);
+        kind = resolveKind(normalized, query);
+        items = dropIrrelevant(normalized, query, kind);
+        shelfCache.set(key, { expiresAt: Date.now() + SHELF_TTL_MS, items, kind });
+        console.log(`[Shelf] "${query}" store=${page.total} relevant=${items.length}`
+            + ` shelf=${kind.confident ? [...kind.sections].join(',') : 'words-only'}`);
     }
 
     // Out of stock always sinks, whatever the ordering: it is not an offer.
@@ -433,7 +450,7 @@ export async function loadShelf(
             || discountOf(right) - discountOf(left)
             || startingPrice(left) - startingPrice(right));
     }
-    return rankCandidates(items, query, ranking);
+    return rankCandidates(items, query, ranking, kind);
 }
 
 /**

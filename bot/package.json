@@ -9,7 +9,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "tsx --test src/silpo/mcp.test.ts src/silpo/products.test.ts src/silpo/grouping.test.ts src/silpo/catalog.test.ts src/silpo/quantity.test.ts src/lists/answer-parsing.test.ts src/lists/selection.test.ts src/ai/gemini.test.ts src/bot/format.test.ts src/bot/buttons.test.ts src/auth/telegram-webapp.test.ts src/config.test.ts src/silpo/ranking.test.ts"
+    "test": "tsx --test src/silpo/mcp.test.ts src/silpo/products.test.ts src/silpo/grouping.test.ts src/silpo/catalog.test.ts src/silpo/quantity.test.ts src/lists/answer-parsing.test.ts src/lists/selection.test.ts src/ai/gemini.test.ts src/bot/format.test.ts src/bot/buttons.test.ts src/auth/telegram-webapp.test.ts src/config.test.ts src/silpo/ranking.test.ts src/silpo/taxonomy.test.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",

@@ -1,10 +1,28 @@
 import type { ProductCandidate } from './products';
 import { startingPrice } from './quantity';
+import {
+    coverageOf,
+    isKind,
+    trustOf,
+    leadsWithKind,
+    normalizeText,
+    queryWords,
+    stem,
+    stemsMatch,
+    type Kind,
+    NO_KIND,
+} from './taxonomy';
 
 // Which product should sit first under a list line. Catalogue search returns
 // whatever matches the words, so "молоко" happily brings back condensed milk
 // and milk chocolate. Relevance therefore dominates the score, and the guest's
 // stated preference only breaks ties among things that genuinely fit.
+//
+// What "relevant" means comes from `taxonomy`: Silpo's own shelving decides the
+// kind, and the words in a title only refine the order within it.
+
+export { normalizeText, stem, stemsMatch };
+export type { Kind };
 
 export type SearchPreference = 'cheap' | 'promo' | 'familiar' | 'premium';
 
@@ -28,63 +46,19 @@ export interface RankingContext {
     familiarity: Familiarity;
 }
 
-export function normalizeText(value: string): string {
-    return value
-        .toLocaleLowerCase('uk-UA')
-        .replace(/[«»"'`’,.()\[\]/\\|+*%]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
 /**
- * Crude Ukrainian stemming: trim the inflected ending so "яйця" meets "яйце"
- * and "банани" meets "банан". Short words keep their shape — cutting three
- * letters off "сир" would match anything.
+ * How much of the query the title carries, 0..1 — the head noun above the rest.
+ * See `coverageOf`; this is the query-string form of it.
  */
-export function stem(word: string): string {
-    if (word.length >= 5) return word.slice(0, -2);
-    if (word.length === 4) return word.slice(0, -1);
-    return word;
-}
-
-/**
- * Whether two words are the same word in different forms.
- *
- * The length bound is what keeps a shared root from becoming a false match:
- * "молоко" and "молочний" both stem toward "моло", which is exactly how
- * milk chocolate ends up offered for "молоко". Requiring the stems to differ
- * by at most one character separates a grammatical ending from a different
- * word built on the same root.
- */
-export function stemsMatch(left: string, right: string): boolean {
-    const a = stem(left);
-    const b = stem(right);
-    if (a === b) return true;
-    if (a.startsWith(b)) return a.length - b.length <= 1;
-    if (b.startsWith(a)) return b.length - a.length <= 1;
-    return false;
-}
-
-function meaningfulWords(value: string): string[] {
-    return normalizeText(value)
-        .split(' ')
-        .filter(word => word.length >= 3);
-}
-
-/** Share of the query's words present in the title, 0..1. */
 export function relevanceOf(title: string, query: string): number {
-    const queryWords = meaningfulWords(query);
-    if (!queryWords.length) return 1;
-    const titleWords = meaningfulWords(title);
-    const matched = queryWords.filter(word => titleWords.some(titleWord => stemsMatch(word, titleWord)));
-    return matched.length / queryWords.length;
+    return coverageOf(title, queryWords(query));
 }
 
 /** The head word carries the product kind; missing it usually means a wrong category. */
 function headWordPresent(title: string, query: string): boolean {
-    const [head] = meaningfulWords(query);
+    const [head] = queryWords(query);
     if (!head) return true;
-    return relevanceOf(title, head) > 0;
+    return coverageOf(title, [head]) > 0;
 }
 
 /**
@@ -96,10 +70,8 @@ function headWordPresent(title: string, query: string): boolean {
  * «Європейський» на перепелиних яйцях": both mention the word, so both score a
  * perfect match. Leading with the kind is the difference.
  */
-function leadsWithKind(title: string, query: string): boolean {
-    const [kind] = meaningfulWords(query);
-    const [lead] = meaningfulWords(title);
-    return Boolean(kind && lead && stemsMatch(kind, lead));
+function titleLeadsWithKind(title: string, query: string): boolean {
+    return leadsWithKind(title, queryWords(query));
 }
 
 function isFamiliar(product: ProductCandidate, familiarity: Familiarity): boolean {
@@ -148,15 +120,47 @@ const FAMILIARITY_BONUS: Record<SearchPreference, number> = {
  */
 const KIND_FIRST_BONUS = 500;
 
+/**
+ * How much standing on the right shelf is worth.
+ *
+ * More than a perfect title, because a perfect title is the weaker evidence of
+ * the two. "Насіння Агроконтракт Помідор Ранній-83" carries the guest's word
+ * exactly and is a packet of seeds; "Томат Azura Черрі сливка" carries none of
+ * it and is the tomato they came for. Once Silpo's shelving has spoken clearly
+ * the shelf decides, and the words only order what is already on it.
+ */
+const RIGHT_SHELF_BONUS = 1200;
+
+/**
+ * What the wording of a title is still worth once the shelf has been settled.
+ *
+ * Very little, deliberately. Every product left is the right kind by then, so
+ * the words can only say which of several right answers is phrased most like
+ * the question — a tiebreaker, not a verdict. Left at full weight it silently
+ * repealed the guest's own instruction: «Найдешевше» over the tomato shelf
+ * would hand back the tomato *named* "Помідор" over the cheaper one named
+ * "Томат", which is the preference losing to a spelling.
+ */
+const WORD_WEIGHT_UNDER_SHELF = 150;
+const WORD_WEIGHT_ALONE = 1000;
+
 export function scoreCandidate(
     product: ProductCandidate,
     query: string,
     context: RankingContext,
-    priceRange: { min: number; max: number }
+    priceRange: { min: number; max: number },
+    kind: Kind = NO_KIND
 ): number {
-    let score = relevanceOf(product.title, query) * 1000;
-    if (!headWordPresent(product.title, query)) score -= 600;
-    if (leadsWithKind(product.title, query)) score += KIND_FIRST_BONUS;
+    const trust = trustOf(product, kind);
+    let score = relevanceOf(product.title, query)
+        * (kind.confident ? WORD_WEIGHT_UNDER_SHELF : WORD_WEIGHT_ALONE);
+    score += trust * (kind.confident ? RIGHT_SHELF_BONUS : 500);
+    // Reading the title for a kind is guesswork that the shelving does better;
+    // where the shelving spoke, it is only noise on top of a settled answer.
+    if (!kind.confident) {
+        if (!headWordPresent(product.title, query)) score -= 600;
+        if (titleLeadsWithKind(product.title, query)) score += KIND_FIRST_BONUS;
+    }
     // Something the guest cannot buy today is never the right default.
     if (!product.inStock) score -= 2000;
     if (isFamiliar(product, context.familiarity)) score += FAMILIARITY_BONUS[context.preference];
@@ -199,7 +203,8 @@ export function scoreCandidate(
 export function rankCandidates(
     products: ProductCandidate[],
     query: string,
-    context: RankingContext
+    context: RankingContext,
+    kind: Kind = NO_KIND
 ): ProductCandidate[] {
     if (products.length <= 1) return [...products];
     const prices = products.map(startingPrice).filter(price => price > 0);
@@ -208,14 +213,52 @@ export function rankCandidates(
         max: prices.length ? Math.max(...prices) : 0,
     };
     return [...products]
-        .map(product => ({ product, score: scoreCandidate(product, query, context, priceRange) }))
+        .map(product => ({ product, score: scoreCandidate(product, query, context, priceRange, kind) }))
         .sort((left, right) => right.score - left.score)
         .map(entry => entry.product);
 }
 
-/** Drops results that are clearly a different product than the one asked for. */
-export function dropIrrelevant(products: ProductCandidate[], query: string): ProductCandidate[] {
-    const relevant = products.filter(product => relevanceOf(product.title, query) >= 0.5);
+/** A title carrying the head noun but none of the qualifiers still counts. */
+const MIN_RELEVANCE = 0.5;
+
+/**
+ * The words still have a job once the shelf is found, but only when the guest
+ * asked for something narrower than the shelf itself.
+ *
+ * `kuriatyna` is the chicken shelf, and a guest who wrote "філе куряче" gets
+ * wings, thighs and drumsticks from it unless the qualifier is allowed to cut.
+ * A one-word line is different: "помідори" is not narrower than the помідори
+ * shelf, and letting the word cut there is precisely what deleted every tomato
+ * for being spelled "Томат".
+ */
+function narrowWithinShelf(onShelf: ProductCandidate[], query: string): ProductCandidate[] {
+    if (queryWords(query).length < 2) return onShelf;
+    const focused = onShelf.filter(product => relevanceOf(product.title, query) >= MIN_RELEVANCE);
+    return focused.length ? focused : onShelf;
+}
+
+/**
+ * Drops results that are clearly a different product than the one asked for.
+ *
+ * The shelf comes first, because words alone got this exactly backwards: a
+ * word filter on "помідори" deleted all 46 tomatoes — every one of them titled
+ * "Томат" — and kept four packets of tomato seeds and a jar of dried tomato
+ * seasoning, which is precisely what the guest was then offered. Where the
+ * shelving spoke clearly, being on the shelf *is* the qualification, and the
+ * title need say nothing at all.
+ */
+export function dropIrrelevant(
+    products: ProductCandidate[],
+    query: string,
+    kind: Kind = NO_KIND
+): ProductCandidate[] {
+    if (kind.confident) {
+        const onShelf = products.filter(product => isKind(product, kind));
+        // A shelf that answers the query is the answer; anything filed elsewhere
+        // is a different product that merely shares a word.
+        if (onShelf.length) return narrowWithinShelf(onShelf, query);
+    }
+    const relevant = products.filter(product => relevanceOf(product.title, query) >= MIN_RELEVANCE);
     // Never leave a line empty just because the wording was unusual.
     return relevant.length ? relevant : products;
 }

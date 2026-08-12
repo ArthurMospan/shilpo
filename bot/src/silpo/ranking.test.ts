@@ -23,6 +23,7 @@ function product(overrides: Partial<ProductCandidate> & { title: string; price: 
         hasPromo: false,
         promoLabel: '',
         url: '',
+        sectionSlug: '',
         ...overrides,
     };
 }
