@@ -1,4 +1,5 @@
-import { callMCPTool, firstMcpObject, parseMcpContent } from './mcp';
+import { callMCPTool, firstMcpObject, listMCPTools, parseMcpContent } from './mcp';
+import { shapeOf } from './shape';
 
 // What a guest means by "my store" depends on how they get the groceries.
 //
@@ -210,6 +211,49 @@ function numberOrNull(value: unknown): number | null {
 }
 
 /**
+ * What Silpo actually calls the free-delivery threshold, asked once.
+ *
+ * `freeFrom` and `freeDeliveryFrom` are names somebody assumed. If neither is
+ * what the payload really uses, the threshold is silently null for every guest
+ * and the delivery line can never react — which is indistinguishable, from
+ * outside, from having no threshold at all. So the first cart each instance
+ * sees reports its own shape, and the tool list goes with it: whether MCP can
+ * price a basket that is not yet in the cart decides whether the number can
+ * ever be Silpo's rather than ours.
+ *
+ * Once per process, and shaped rather than dumped — see `shapeOf`, which keeps
+ * the key names and the numbers and discards everything a person could be
+ * identified by.
+ */
+let shapeReported = false;
+
+function reportCalculationShape(calculation: any, token: string): void {
+    if (shapeReported) return;
+    shapeReported = true;
+    try {
+        console.log('[Delivery] calculation shape:', JSON.stringify(shapeOf(calculation)));
+    } catch (error) {
+        console.warn('[Delivery] Could not shape the calculation payload:', error);
+    }
+    listMCPTools(token)
+        .then(tools => console.log('[Delivery] MCP tools:', tools.map(tool => tool.name).join(', ')))
+        .catch(() => undefined);
+}
+
+/**
+ * Zero is an answer here, not a missing value.
+ *
+ * A threshold of zero is no threshold, and a minimum of zero is no minimum — so
+ * `numberOrNull` is right for those. A delivery *fee* of zero is the whole good
+ * news, and reporting it as "no number" hid the delivery line at exactly the
+ * moment it had something worth saying.
+ */
+function priceOrNull(value: unknown): number | null {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/**
  * Derives the shopping context the list is priced in.
  *
  * By default that is the guest's own Silpo cart: prices and availability are
@@ -254,6 +298,7 @@ export async function getStoreContext(
     // context. Reporting them next to another store's prices would be a lie, so
     // they are simply absent while the guest shops elsewhere.
     const calculation = matchesCart ? (cart?.calculation || {}) : {};
+    if (matchesCart) reportCalculationShape(calculation, token);
     const validations = Array.isArray(calculation?.validations) ? calculation.validations : [];
     const minimum = validations.find((validation: any) => Number(validation?.context?.orderCostMin) > 0);
     const delivery = calculation?.delivery || {};
@@ -275,7 +320,7 @@ export async function getStoreContext(
         cartStoreLabel: cartBranch ? publicStoreLabel(cartBranch) : '',
         matchesCart,
         orderMinimum: numberOrNull(minimum?.context?.orderCostMin),
-        deliveryPrice: numberOrNull(delivery?.total) ?? numberOrNull(express?.price),
+        deliveryPrice: priceOrNull(delivery?.total) ?? priceOrNull(express?.price),
         freeDeliveryFrom: numberOrNull(delivery?.freeFrom) ?? numberOrNull(delivery?.freeDeliveryFrom),
         deliveryTemporarilyUnavailable: typeof express?.isTemporarilyUnavailable === 'boolean'
             ? express.isTemporarilyUnavailable

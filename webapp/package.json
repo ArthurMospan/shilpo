@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "test": "tsx --test src/drag-scroll.test.ts"
+    "test": "tsx --test src/drag-scroll.test.ts src/delivery.test.ts"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

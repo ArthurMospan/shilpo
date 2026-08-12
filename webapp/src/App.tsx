@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { attachDragScroll } from './drag-scroll';
+import { deliveryState } from './delivery';
 import {
     ArrowRight, Check, ChevronDown, ChevronRight, Layers, ListPlus, Minus, Plus,
     RotateCcw, Search, ShoppingCart, Sparkles, Store, Trash2, Truck, X,
@@ -251,7 +252,7 @@ export default function App() {
         );
     }
 
-    const belowMinimum = data.store.orderMinimum !== null && totals.total < data.store.orderMinimum;
+    const delivery = deliveryState(data.store, totals.total, data.cart.total);
 
     return (
         <div className="shell">
@@ -290,15 +291,22 @@ export default function App() {
                                 <b>{totals.productCount}</b> {pluralize(totals.productCount, 'товар', 'товари', 'товарів')}
                                 {totals.missing > 0 && <> · {totals.missing} без вибору</>}
                             </div>
-                            {data.store.deliveryPrice !== null && (
+                            {!delivery.unknown && (
                                 <div>
-                                    🚚 доставка <b>{money(data.store.deliveryPrice!)}</b>
-                                    {data.store.freeDeliveryFrom ? ` · безкоштовно від ${money(data.store.freeDeliveryFrom)}` : ''}
+                                    {delivery.free ? (
+                                        <>🚚 доставка <b>безкоштовна</b></>
+                                    ) : (
+                                        <>
+                                            🚚 доставка <b>{money(delivery.price)}</b>
+                                            {delivery.freeFrom !== null
+                                                && ` · безкоштовно від ${money(delivery.freeFrom)} — ще ${money(delivery.toFree)}`}
+                                        </>
+                                    )}
                                 </div>
                             )}
-                            {belowMinimum && (
+                            {delivery.belowMinimum && (
                                 <div className="footer-warning">
-                                    До мінімального замовлення ще {money(data.store.orderMinimum! - totals.total)}
+                                    До мінімального замовлення ще {money(delivery.missingForMinimum)}
                                 </div>
                             )}
                             {!data.cart.isEmpty && (

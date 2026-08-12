@@ -213,7 +213,11 @@ export async function searchAndInvite(
             '',
             `💰 Ціна від <b>${formatPrice(floor)}</b> — залежно від того, що обереш`,
         ];
-        if (context.deliveryPrice !== null) {
+        if (context.deliveryPrice === 0) {
+            // Silpo already charges nothing for this cart, and adding to a cart
+            // never brings the fee back.
+            lines.push('🚚 Доставка: <b>безкоштовна</b>');
+        } else if (context.deliveryPrice !== null) {
             const free = context.freeDeliveryFrom
                 ? ` · безкоштовно від <b>${formatPrice(context.freeDeliveryFrom)}</b>`
                 : '';
