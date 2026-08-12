@@ -109,9 +109,29 @@ a { color: inherit; }
 }
 .item-remove.restore { color: var(--green); background: var(--green-soft); }
 
+/* The strip has to say what a sideways drag on it means, because three
+   different things were quietly claiming that gesture instead:
+
+   - snapping. `scroll-snap-type: x proximity` with a snap point on every card
+     springs the strip back to the nearest one, and a line offering three
+     products has less total scroll than the spring travels — so those strips sat
+     dead while a line offering twenty scrolled fine. Which line you touched was
+     the difference nobody could see. A shortlist gains nothing from snapping;
+   - the photo and the title. A touch beginning on an <img> or on selectable
+     text can be taken by the drag or the text-selection recogniser, which
+     cancels the scroll. That depends on where the finger lands and how long it
+     rests before moving, which is what made this feel random;
+   - the far end. Without containment the overscroll chains up to the document
+     and out to the Telegram client, and a fresh strip sits at its left end — so
+     the first flick in the natural direction went to the client, not the strip.
+
+   `pan-x pan-y` keeps the page scrollable from the strip while taking pinch and
+   double-tap-zoom out of the disambiguation the WebView has to do first. */
 .candidate-strip {
   display: flex; gap: 9px; margin: 11px -13px 0; padding: 2px 13px 6px;
-  overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity;
+  overflow-x: auto; scrollbar-width: none;
+  touch-action: pan-x pan-y;
+  overscroll-behavior-x: contain;
 }
 .candidate-strip::-webkit-scrollbar { display: none; }
 
@@ -120,9 +140,11 @@ a { color: inherit; }
   display: flex; flex: 0 0 108px; flex-direction: column; gap: 6px;
   width: 108px; padding: 8px 8px 9px;
   border: 2px solid transparent; border-radius: 16px;
-  background: #f7f7f4; text-align: left; scroll-snap-align: start;
+  background: #f7f7f4; text-align: left;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   transition: border-color .16s ease, background .16s ease, transform .16s ease;
 }
+.candidate img { -webkit-user-drag: none; user-drag: none; pointer-events: none; }
 .candidate:active { transform: scale(.97); }
 .candidate.selected { border-color: var(--orange); background: var(--orange-soft); }
 .candidate.out-of-stock { opacity: .55; }
