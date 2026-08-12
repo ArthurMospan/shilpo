@@ -109,30 +109,19 @@ a { color: inherit; }
 }
 .item-remove.restore { color: var(--green); background: var(--green-soft); }
 
-/* The strip has to say what a sideways drag on it means, because three
-   different things were quietly claiming that gesture instead:
-
-   - snapping. `scroll-snap-type: x proximity` with a snap point on every card
-     springs the strip back to the nearest one, and a line offering three
-     products has less total scroll than the spring travels — so those strips sat
-     dead while a line offering twenty scrolled fine. Which line you touched was
-     the difference nobody could see. A shortlist gains nothing from snapping;
-   - the photo and the title. A touch beginning on an <img> or on selectable
-     text can be taken by the drag or the text-selection recogniser, which
-     cancels the scroll. That depends on where the finger lands and how long it
-     rests before moving, which is what made this feel random;
-   - the far end. Without containment the overscroll chains up to the document
-     and out to the Telegram client, and a fresh strip sits at its left end — so
-     the first flick in the natural direction went to the client, not the strip.
-
-   `pan-x pan-y` keeps the page scrollable from the strip while taking pinch and
-   double-tap-zoom out of the disambiguation the WebView has to do first. */
+/* `pan-y` hands the browser the vertical gesture and keeps the horizontal one
+   for `useDragScroll`, which moves this strip itself. Declaring the axis here is
+   what stops the native scroller from starting a fling we then fight — that
+   tug-of-war is what made the strip move and spring back. Scrolling by wheel,
+   trackpad or keyboard still works, so `overflow-x` and the containment stay. */
 .candidate-strip {
   display: flex; gap: 9px; margin: 11px -13px 0; padding: 2px 13px 6px;
   overflow-x: auto; scrollbar-width: none;
-  touch-action: pan-x pan-y;
+  touch-action: pan-y;
   overscroll-behavior-x: contain;
+  cursor: grab;
 }
+.candidate-strip:active { cursor: grabbing; }
 .candidate-strip::-webkit-scrollbar { display: none; }
 
 .candidate {

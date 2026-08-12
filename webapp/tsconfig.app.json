@@ -16,5 +16,9 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests run under Node with `tsx`, not in the browser bundle, and reach for
+  // node: modules this project has no types for. The bot's tsconfig excludes
+  // its own the same way.
+  "exclude": ["src/**/*.test.ts"]
 }

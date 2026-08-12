@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { attachDragScroll } from './drag-scroll';
 import {
     ArrowRight, Check, ChevronDown, ChevronRight, Layers, ListPlus, Minus, Plus,
     RotateCcw, Search, ShoppingCart, Sparkles, Store, Trash2, Truck, X,
@@ -459,6 +460,13 @@ function HomeScreen({ home, onOpenList, onNewList }: {
 
 // ── List ────────────────────────────────────────────────────────────
 
+/** Binds the strip's sideways drag; see `drag-scroll` for why we drive it. */
+function useDragScroll<T extends HTMLElement>() {
+    const ref = useRef<T>(null);
+    useEffect(() => (ref.current ? attachDragScroll(ref.current) : undefined), []);
+    return ref;
+}
+
 interface ItemCardProps {
     item: UiItem;
     onSelect(item: UiItem, product: ProductCandidate): void;
@@ -468,6 +476,7 @@ interface ItemCardProps {
 }
 
 function ItemCard({ item, onSelect, onQuantity, onToggleDropped, onOpenAlternatives }: ItemCardProps) {
+    const strip = useDragScroll<HTMLDivElement>();
     const selected = item.candidates.find(candidate => candidate.productId === item.selectedProductId) || null;
     const lineTotal = selected ? selected.price * item.quantity : 0;
     const step = stepOf(selected);
@@ -503,7 +512,7 @@ function ItemCard({ item, onSelect, onQuantity, onToggleDropped, onOpenAlternati
                 </>
             ) : (
                 <>
-                    <div className="candidate-strip">
+                    <div className="candidate-strip" ref={strip}>
                         {item.candidates.map(candidate => (
                             <CandidateCard
                                 key={candidate.productId}
