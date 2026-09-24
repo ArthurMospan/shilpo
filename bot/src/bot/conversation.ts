@@ -24,9 +24,11 @@ export function pickerUrl(listId: string): string {
     return `${webappUrl()}/?list=${encodeURIComponent(listId)}`;
 }
 
+// A Mini App button keeps the Silpo login inside Telegram. A plain link opens
+// the system browser on desktop clients, far from the chat.
 export function connectKeyboard(tgId: number) {
     return Markup.inlineKeyboard([
-        [styled(Markup.button.url('🔗 Підключити Кабінет Сільпо', signAuthLink(webappUrl(), tgId)), 'primary')],
+        [styled(Markup.button.webApp('🔗 Підключити Кабінет Сільпо', signAuthLink(webappUrl(), tgId)), 'primary')],
     ]);
 }
 

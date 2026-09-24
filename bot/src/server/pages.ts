@@ -1,6 +1,6 @@
-// Standalone pages shown in the external browser during the OAuth handshake.
-// They are intentionally dependency-free: this window is opened by Silpo's
-// redirect, outside the Mini App bundle.
+// Standalone pages shown during the OAuth handshake, inside the Telegram Mini
+// App window or, on older buttons, in a browser. They stay outside the Mini App
+// bundle: this page is opened by Silpo's redirect.
 
 function shell(title: string, accent: string, icon: string, heading: string, body: string, extraScript = ''): string {
     return `<!doctype html>
@@ -37,7 +37,8 @@ function shell(title: string, accent: string, icon: string, heading: string, bod
     <p>${body}</p>
     <p class="hint">Це вікно можна закрити.</p>
   </main>
-  <script>${extraScript}</script>
+  ${extraScript ? `<script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>${extraScript}</script>` : ''}
 </body>
 </html>`;
 }
@@ -48,8 +49,8 @@ export function connectedPage(): string {
         'linear-gradient(135deg, #ffe8d4, #ffd6b3)',
         '🍊',
         'Готово!',
-        'Кабінет Сільпо підключено. Повертайся в Telegram — Шільпо вже шукає товари зі списку.',
-        // Telegram closes the in-app browser itself when the WebApp API is present.
+        'Кабінет Сільпо підключено. Повертайся в чат — Шільпо вже шукає товари зі списку.',
+        // Inside the Mini App the Telegram SDK lets the page close its own window.
         'setTimeout(function(){ try { window.Telegram?.WebApp?.close(); } catch (e) {} window.close(); }, 1800);'
     );
 }
