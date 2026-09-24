@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import db from '../db/index';
-import { MCP_BASE, McpUnauthorizedError } from './mcp';
+import { MCP_BASE } from './mcp';
+import { withRefreshOnce } from './token-retry';
 
 // Silpo MCP implements OAuth 2.1 + PKCE with Dynamic Client Registration.
 // Each guest gets their own registered client so a revoked consent affects
@@ -183,21 +184,22 @@ export class SilpoNotConnectedError extends Error {
 
 /**
  * Runs an MCP operation with the guest's token, transparently refreshing once
- * if Silpo reports the token as expired.
+ * if Silpo reports the token as expired. When Silpo refuses even the refreshed
+ * token, the guest is disconnected so they are asked to log in again.
  */
 export async function withSilpoToken<T>(tgId: number, operation: (token: string) => Promise<T>): Promise<T> {
     const token = await tokenForUser(tgId);
     if (!token) throw new SilpoNotConnectedError();
-    try {
-        return await operation(token);
-    } catch (error) {
-        if (!(error instanceof McpUnauthorizedError)) throw error;
-        tokenCache.delete(tgId);
-        const refreshed = await refreshToken(tgId);
-        if (!refreshed) {
+    return withRefreshOnce(
+        token,
+        operation,
+        async () => {
+            tokenCache.delete(tgId);
+            return refreshToken(tgId);
+        },
+        async () => {
             await disconnect(tgId);
             throw new SilpoNotConnectedError();
         }
-        return operation(refreshed);
-    }
+    );
 }
