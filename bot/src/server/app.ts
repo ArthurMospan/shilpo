@@ -149,26 +149,33 @@ export function createApp(bot: Telegraf) {
             res.status(400).send(errorPage('Невідома відповідь', 'Спробуйте підключити акаунт ще раз із чату.'));
             return;
         }
+        let tgId: number;
         try {
-            const tgId = await completeAuthorization(code, state);
-            res.send(connectedPage());
-
-            // Continue the conversation the guest was in the middle of. This is
-            // also where the reply keyboard lands: the welcome message had to
-            // carry the connect button instead.
-            await bot.telegram.sendMessage(
-                tgId,
-                '✅ <b>Кабінет Сільпо підключено!</b>\nТепер я бачу твій магазин, ціни й кошик.',
-                { parse_mode: 'HTML', ...mainKeyboard() }
-            ).catch(() => undefined);
-            const active = await getActiveList(tgId);
-            if (active) await resumePendingList(bot, tgId, active.listId).catch(error =>
-                console.error('[OAuth] Failed to resume list:', error));
+            tgId = await completeAuthorization(code, state);
         } catch (error) {
             console.error('[OAuth] Token exchange failed:', error);
             res.status(502).send(errorPage('Не вдалося підключити', 'Спробуйте ще раз із чату — посилання діє 15 хвилин.'));
+            return;
         }
+        res.send(connectedPage());
+        // The page has already answered, so on Vercel the chat would never hear
+        // back unless the invocation is kept alive for the rest of the work.
+        deferWork(continueAfterConnect(tgId).catch(error =>
+            console.error('[OAuth] Failed to continue after connecting:', error)));
     });
+
+    // Continue the conversation the guest was in the middle of. This is also
+    // where the reply keyboard lands: the welcome message had to carry the
+    // connect button instead.
+    async function continueAfterConnect(tgId: number): Promise<void> {
+        await bot.telegram.sendMessage(
+            tgId,
+            '✅ <b>Кабінет Сільпо підключено!</b>\nТепер я бачу твій магазин, ціни й кошик.',
+            { parse_mode: 'HTML', ...mainKeyboard() }
+        ).catch(() => undefined);
+        const active = await getActiveList(tgId);
+        if (active) await resumePendingList(bot, tgId, active.listId);
+    }
 
     // ── Mini App API ────────────────────────────────────────────────
     // Everything under /api registered from here on requires a signed Telegram
